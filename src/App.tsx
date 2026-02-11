@@ -15,6 +15,7 @@ import { CreateUmaPage } from './pages/CreateUmaPage';
 import { EditUmaPage } from './pages/EditUmaPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { DevToolsPage } from './pages/DevToolsPage'; // <--- IMPORT THIS
+import { LeagueRosterPage } from './pages/LeagueRosterPage';
 
 function App() {
   useEffect(() => { initGame(); }, []);
@@ -39,6 +40,7 @@ function App() {
             <Route path="/edit/:id" element={<EditUmaPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/devtools" element={<DevToolsPage />} /> {/* <--- ADD THIS LINE */}
+            <Route path="/league-roster" element={<LeagueRosterPage />} />
           </Routes>
 
         </div>

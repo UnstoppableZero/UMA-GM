@@ -7,6 +7,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { trainUma } from '../training';
 import { getRaceByWeek, TOTAL_WEEKS } from '../data/calendar';
+// NEW IMPORTS FOR REAL MATCHMAKING
+import { getQualifiedEntrants, createDivisions } from '../logic/matchmaking';
 
 const TRACKS = ['Tokyo', 'Nakayama', 'Kyoto', 'Hanshin', 'Chukyo', 'Sapporo', 'Niigata', 'Fukushima', 'Kokura', 'Hakodate', 'Ohi'];
 const DISTANCES = [1200, 1400, 1600, 1800, 2000, 2200, 2400, 2500, 3000, 3200];
@@ -15,7 +17,7 @@ export function DevToolsPage() {
   // --- CALIBRATION STATE ---
   const [selectedTrack, setSelectedTrack] = useState('Tokyo');
   const [selectedDist, setSelectedDist] = useState(2400);
-  const [selectedSurface, setSelectedSurface] = useState<'Turf' | 'Dirt'>('Turf'); // NEW!
+  const [selectedSurface, setSelectedSurface] = useState<'Turf' | 'Dirt'>('Turf'); 
   const [testOutcome, setTestOutcome] = useState<RaceOutcome | null>(null);
 
   // --- FAST SIM STATE ---
@@ -37,7 +39,6 @@ export function DevToolsPage() {
       return horse;
     });
 
-    // Pass the surface into the simulation so the outcome object gets it
     const outcome = simulateRace(field, selectedDist, selectedSurface);
     setTestOutcome(outcome);
   };
@@ -63,16 +64,23 @@ export function DevToolsPage() {
       });
       roster = trainingUpdates;
 
+      // B. RACE (Using actual matchmaking and divisions)
       const raceEvent = getRaceByWeek(currentWeek);
       if (raceEvent) {
          const actives = roster.filter(u => u.status === 'active');
-         if (actives.length >= 8) {
-             const field = actives.sort(() => 0.5 - Math.random()).slice(0, 18);
-             // Note: Here we pass raceEvent.surface if your calendar supports it, otherwise defaults to Turf
+         const qualified = getQualifiedEntrants(actives, raceEvent);
+         const divisions = createDivisions(qualified);
+
+         for (let divIdx = 0; divIdx < divisions.length; divIdx++) {
+             const field = divisions[divIdx];
+             if (field.length < 2) continue; // Skip empty heats
+
              const outcome = simulateRace(field, raceEvent.distance, raceEvent.surface || 'Turf');
+             const divName = divisions.length > 1 ? ` (Div ${divIdx + 1})` : "";
              
              const winner = outcome.results[0].uma;
              const realWinner = roster.find(u => u.id === winner.id);
+             
              if (realWinner) {
                  realWinner.career.wins += 1;
                  realWinner.career.earnings += raceEvent.purse;
@@ -81,13 +89,29 @@ export function DevToolsPage() {
                  if (!realWinner.history) realWinner.history = [];
                  realWinner.history.push({
                      year: currentYear, week: currentWeek, 
-                     raceName: raceEvent.name, rank: 1, time: outcome.results[0].time
+                     raceName: raceEvent.name + divName, rank: 1, time: outcome.results[0].time
                  });
                  
+                // Create the Top 3 Array from the outcome results
+                 const top3Finishers = outcome.results.slice(0, 3).map(r => ({
+                     id: r.uma.id,
+                     name: `${r.uma.firstName} ${r.uma.lastName}`,
+                     time: r.time
+                 }));
+
                  await db.raceHistory.add({
-                     year: currentYear, week: currentWeek, raceName: raceEvent.name,
+                     year: currentYear, week: currentWeek, raceName: raceEvent.name + divName,
                      winnerId: realWinner.id, winnerName: `${realWinner.firstName} ${realWinner.lastName}`,
-                     time: outcome.results[0].time
+                     time: outcome.results[0].time,
+                     top3: top3Finishers // Pushing the new array to the database!
+                 });
+
+                 // PUSH TO LEAGUE NEWS
+                 await db.news.add({
+                     year: currentYear,
+                     week: currentWeek,
+                     message: `🏆 [${raceEvent.grade}] ${realWinner.firstName} ${realWinner.lastName} wins the ${raceEvent.name}${divName}!`,
+                     type: 'info'
                  });
              }
          }
@@ -202,8 +226,8 @@ export function DevToolsPage() {
         <RaceViewer 
           outcome={testOutcome} 
           location={selectedTrack as any} 
-          distance={selectedDist}      // FIXED: Passing distance prop
-          surface={selectedSurface}    // FIXED: Passing surface prop
+          distance={selectedDist}      
+          surface={selectedSurface}    
           onClose={() => setTestOutcome(null)} 
         />
       )}

@@ -31,6 +31,8 @@ export function Sidebar() {
         {/* LEAGUE & WORLD */}
         <div style={{ ...sectionTitle, marginTop: '20px' }}>LEAGUE</div>
         <NavLink to="/league" label="Standings" icon="🏆" active={location.pathname === '/league'} />
+        {/* NEW LEAGUE ROSTER LINK */}
+        <NavLink to="/league-roster" label="League Roster" icon="👥" active={location.pathname === '/league-roster'} />
         <NavLink to="/calendar" label="Schedule" icon="📅" active={location.pathname === '/calendar'} />
         <NavLink to="/history" label="History" icon="🏛️" active={location.pathname === '/history'} />
         <NavLink to="/hof" label="Hall of Fame" icon="🌟" active={location.pathname === '/hof'} />

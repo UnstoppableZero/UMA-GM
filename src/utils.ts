@@ -1,32 +1,22 @@
-// src/utils.ts
-// src/utils.ts
 import type { Uma } from './types';
 
 export function calculateOVR(uma: Uma): number {
-  // 1. Average the Base Stats
-  const totalStats = 
-    uma.stats.speed + 
-    uma.stats.stamina + 
-    uma.stats.power + 
-    uma.stats.guts + 
-    uma.stats.wisdom;
+  const stats = uma.stats;
+  const totalStats = stats.speed + stats.stamina + stats.power + stats.guts + stats.wisdom;
 
-  // Formula: Map 0-1200 stats to roughly 0-100 rating
-  // A generic C-rank girl (600 avg) -> 3000 total / 55 = ~54 OVR
-  // An S-rank legend (1000 avg) -> 5000 total / 55 = ~90 OVR
-  // Maxed out (1200 avg) -> 6000 total / 55 = 109 OVR (God tier)
-  let baseOVR = totalStats / 55;
+  // Old Math: (totalStats / 6000) * 100
+  // NEW MATH: We grade them against a realistic Hall of Fame cap of 4400 total stats
+  let ovr = Math.floor((totalStats / 4400) * 100);
 
-  // 2. Bonus for Skills
-  // Each skill adds +2 to the OVR (making them more valuable than just raw stats)
-  const skillBonus = (uma.skills ? uma.skills.length : 0) * 2;
-
-  return Math.floor(baseOVR + skillBonus);
+  // Hard cap at 99, because 100 OVR should be literally impossible 
+  // (unless you want to allow 100, then change this to 100!)
+  return Math.min(ovr, 99); 
 }
 
 export function getOVRColor(ovr: number): string {
-  if (ovr >= 90) return '#e74c3c'; // Red (Legend)
-  if (ovr >= 80) return '#f1c40f'; // Gold (Star)
-  if (ovr >= 70) return '#2ecc71'; // Green (Starter)
-  return '#95a5a6'; // Grey (Bench)
+  if (ovr >= 90) return '#9b59b6'; // Purple for 90+ (Generational / S-Tier)
+  if (ovr >= 80) return '#f1c40f'; // Gold for 80s (Elite / A-Tier)
+  if (ovr >= 70) return '#e67e22'; // Orange for 70s (Solid / B-Tier)
+  if (ovr >= 60) return '#3498db'; // Blue for 60s (Average / C-Tier)
+  return '#95a5a6';                // Grey for <60 (Rookies / Scrubs)
 }

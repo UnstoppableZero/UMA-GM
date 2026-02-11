@@ -1,70 +1,110 @@
 // src/pages/ProfilePage.tsx
-import { useParams, Link, useNavigate } from 'react-router-dom'; // Added useNavigate
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
+import { calculateOVR, getOVRColor } from '../utils';
 
 export function ProfilePage() {
   const { id } = useParams(); 
-  const navigate = useNavigate(); // Hook for navigation
+  const navigate = useNavigate();
   const uma = useLiveQuery(() => db.umas.get(id || ""));
 
-  if (!uma) return <div>Loading Profile... (or Girl Retired)</div>;
+  if (!uma) return <div style={{padding: '20px'}}>Loading Profile... (or Girl Retired)</div>;
+
+  const ovr = calculateOVR(uma);
+  const ovrColor = getOVRColor(ovr);
+
+  // --- DERIVE ACCURATE RECORD FROM HISTORY ---
+  // We calculate this on the fly to ignore any corrupted career counters.
+  const history = uma.history || [];
+  const wins = history.filter(h => h.rank === 1).length;
+  const races = history.length;
+  const losses = Math.max(0, races - wins);
+
+  // --- RADAR CHART MATH ---
+  const renderRadarChart = () => {
+    const size = 180;
+    const center = size / 2;
+    const radius = 70;
+    const stats = [uma.stats.speed, uma.stats.stamina, uma.stats.power, uma.stats.guts, uma.stats.wisdom];
+    const maxStat = 1200;
+
+    const getPoint = (val: number, angleIndex: number) => {
+      const angle = (Math.PI * 2 * angleIndex) / 5 - Math.PI / 2; 
+      const r = (val / maxStat) * radius;
+      return `${center + r * Math.cos(angle)},${center + r * Math.sin(angle)}`;
+    };
+
+    const statPolygon = stats.map((stat, i) => getPoint(stat, i)).join(' ');
+    const bgPolygon = [1200, 1200, 1200, 1200, 1200].map((stat, i) => getPoint(stat, i)).join(' ');
+    const midPolygon = [600, 600, 600, 600, 600].map((stat, i) => getPoint(stat, i)).join(' ');
+
+    return (
+      <div style={{ position: 'relative', width: `${size}px`, height: `${size}px`, margin: '0 auto' }}>
+        <svg width={size} height={size}>
+          <polygon points={bgPolygon} fill="#ecf0f1" stroke="#bdc3c7" strokeWidth="1" />
+          <polygon points={midPolygon} fill="none" stroke="#bdc3c7" strokeWidth="1" strokeDasharray="3,3" />
+          
+          {[0, 1, 2, 3, 4].map(i => (
+             <line key={i} x1={center} y1={center} x2={getPoint(1200, i).split(',')[0]} y2={getPoint(1200, i).split(',')[1]} stroke="#bdc3c7" strokeWidth="1" />
+          ))}
+
+          <polygon points={statPolygon} fill="rgba(52, 152, 219, 0.5)" stroke="#2980b9" strokeWidth="2" />
+        </svg>
+        <div style={{...radarLabelStyle, top: '-5px', left: '50%', transform: 'translateX(-50%)'}}>SPD</div>
+        <div style={{...radarLabelStyle, top: '35%', right: '-5px'}}>STA</div>
+        <div style={{...radarLabelStyle, bottom: '5px', right: '15px'}}>POW</div>
+        <div style={{...radarLabelStyle, bottom: '5px', left: '15px'}}>GUT</div>
+        <div style={{...radarLabelStyle, top: '35%', left: '-5px'}}>WIS</div>
+      </div>
+    );
+  };
 
   return (
-    <div>
-      {/* HEADER: Name & Bio */}
+    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
+      
       <div style={{ 
-        backgroundColor: 'white', padding: '20px', borderRadius: '8px', 
+        backgroundColor: 'white', padding: '20px', borderRadius: '12px', 
         marginBottom: '20px', 
-        // @ts-ignore
-        borderLeft: `5px solid ${uma.color || '#e91e63'}`, // Dynamic Color!
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center' // Flex layout
+        borderLeft: `8px solid ${ovrColor}`, 
+        boxShadow: '0 4px 15px rgba(0,0,0,0.05)',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center' 
       }}>
-        {/* Left Side: Info */}
-        <div>
-            <div style={{ fontSize: '14px', color: '#7f8c8d' }}>
-            Age {uma.age} | {uma.career.wins} Wins | Earnings: ${uma.career.earnings.toLocaleString()}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            <div style={{ 
+                backgroundColor: ovrColor, color: 'white', 
+                width: '70px', height: '70px', borderRadius: '12px',
+                display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+                boxShadow: `0 4px 10px ${ovrColor}40`
+            }}>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', opacity: 0.9 }}>OVR</span>
+                <span style={{ fontSize: '32px', fontWeight: '900', lineHeight: '1' }}>{ovr}</span>
             </div>
-            <h1 style={{ margin: '5px 0', color: '#2c3e50' }}>{uma.firstName} {uma.lastName}</h1>
+
+            <div>
+                <h1 style={{ margin: '0 0 5px 0', color: '#2c3e50', fontSize: '32px' }}>{uma.firstName} {uma.lastName}</h1>
+                <div style={{ fontSize: '15px', color: '#7f8c8d', display: 'flex', gap: '15px', fontWeight: 'bold' }}>
+                    <span>🎂 Age {uma.age}</span>
+                    <span style={{color: '#34495e'}}>🏆 {wins}-{losses} Record</span>
+                    <span style={{color: '#27ae60'}}>💰 ${uma.career.earnings.toLocaleString()}</span>
+                </div>
+            </div>
         </div>
 
-        {/* Right Side: Edit Button */}
         <button 
             onClick={() => navigate(`/edit/${uma.id}`)}
-            style={{
-            padding: '10px 20px', 
-            backgroundColor: '#34495e', 
-            color: 'white', 
-            border: 'none', 
-            borderRadius: '5px', 
-            cursor: 'pointer', 
-            fontWeight: 'bold',
-            fontSize: '14px'
-            }}
+            style={{ padding: '10px 20px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
         >
             ✏️ Edit DNA
         </button>
       </div>
 
-      {/* TROPHY CASE */}
       {uma.trophies && uma.trophies.length > 0 && (
-        <div style={{ 
-          backgroundColor: '#fff3cd', 
-          padding: '15px', 
-          marginBottom: '20px', 
-          borderRadius: '8px', 
-          border: '1px solid #ffeeba',
-          textAlign: 'center'
-        }}>
+        <div style={{ backgroundColor: '#fff3cd', padding: '15px', marginBottom: '20px', borderRadius: '12px', border: '1px solid #ffeeba', textAlign: 'center' }}>
           <h3 style={{ margin: '0 0 10px 0', color: '#856404' }}>🏆 Trophy Case</h3>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
             {uma.trophies.map((trophy, idx) => (
-              <span key={idx} style={{ 
-                fontSize: '16px', fontWeight: 'bold', 
-                backgroundColor: 'white', padding: '5px 15px', 
-                borderRadius: '20px', boxShadow: '0 2px 2px rgba(0,0,0,0.1)'
-              }}>
+              <span key={idx} style={{ fontSize: '16px', fontWeight: 'bold', backgroundColor: 'white', padding: '6px 16px', borderRadius: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                 {trophy}
               </span>
             ))}
@@ -74,103 +114,190 @@ export function ProfilePage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
         
-        {/* LEFT COLUMN: Stats & Skills */}
-        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
-          {/* SKILLS SECTION */}
-          <h3 style={{ borderBottom: '2px solid #eee', paddingBottom: '10px', marginTop: 0 }}>⚡ Skills</h3>
-          {uma.skills && uma.skills.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
-              {uma.skills.map((skill, idx) => (
-                <div key={idx} style={{ 
-                  backgroundColor: '#f1c40f', 
-                  color: '#2c3e50',
-                  padding: '10px', 
-                  borderRadius: '6px',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{skill.name}</div>
-                  <div style={{ fontSize: '12px', opacity: 0.9 }}>{skill.description}</div>
+          <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+            <h3 style={sectionHeaderStyle}>📊 Core Attributes</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <div style={{ flex: '0 0 180px' }}>
+                    {renderRadarChart()}
                 </div>
-              ))}
-            </div>
-          ) : (
-             <div style={{ color: '#999', fontStyle: 'italic', marginBottom: '30px' }}>No special skills yet.</div>
-          )}
 
-          <h3 style={{ borderBottom: '2px solid #eee', paddingBottom: '10px' }}>📊 Attributes</h3>
-          <table style={{ width: '100%' }}>
-            <tbody>
-              <tr><td>Speed</td><td><b>{uma.stats.speed}</b></td></tr>
-              <tr><td>Stamina</td><td><b>{uma.stats.stamina}</b></td></tr>
-              <tr><td>Power</td><td><b>{uma.stats.power}</b></td></tr>
-              <tr><td>Guts</td><td><b>{uma.stats.guts}</b></td></tr>
-              <tr><td>Wisdom</td><td><b>{uma.stats.wisdom}</b></td></tr>
-            </tbody>
-          </table>
-          
-          <h3 style={{ marginTop: '20px', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>🧩 Aptitudes</h3>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-             <span style={badgeStyle}>Turf: {getGrade(uma.aptitude.surface.turf)}</span>
-             <span style={badgeStyle}>Dist: {getGrade(uma.aptitude.distance.medium)}</span>
-             <span style={badgeStyle}>Strat: {getGrade(uma.aptitude.strategy.leader)}</span>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <StatBar label="Speed" val={uma.stats.speed} />
+                    <StatBar label="Stamina" val={uma.stats.stamina} />
+                    <StatBar label="Power" val={uma.stats.power} />
+                    <StatBar label="Guts" val={uma.stats.guts} />
+                    <StatBar label="Wisdom" val={uma.stats.wisdom} />
+                </div>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+            <h3 style={sectionHeaderStyle}>🧩 Aptitude Matrix</h3>
+            
+            <div style={aptGroupStyle}>
+                <div style={aptLabelStyle}>Surface</div>
+                <div style={aptBadgeContainerStyle}>
+                    <AptBadge label="Turf" val={uma.aptitude.surface?.turf || 0} />
+                    <AptBadge label="Dirt" val={uma.aptitude.surface?.dirt || 0} />
+                </div>
+            </div>
+
+            <div style={aptGroupStyle}>
+                <div style={aptLabelStyle}>Distance</div>
+                <div style={aptBadgeContainerStyle}>
+                    <AptBadge label="Short" val={uma.aptitude.distance?.short || 0} />
+                    <AptBadge label="Mile" val={uma.aptitude.distance?.mile || 0} />
+                    <AptBadge label="Medium" val={uma.aptitude.distance?.medium || 0} />
+                    <AptBadge label="Long" val={uma.aptitude.distance?.long || 0} />
+                </div>
+            </div>
+
+            <div style={aptGroupStyle}>
+                <div style={aptLabelStyle}>Strategy</div>
+                <div style={aptBadgeContainerStyle}>
+                    <AptBadge label="Runner" val={uma.aptitude.strategy?.runner || 0} />
+                    <AptBadge label="Leader" val={uma.aptitude.strategy?.leader || 0} />
+                    <AptBadge label="Betweener" val={uma.aptitude.strategy?.betweener || 0} />
+                    <AptBadge label="Chaser" val={uma.aptitude.strategy?.chaser || 0} />
+                </div>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+             <h3 style={sectionHeaderStyle}>⚡ Special Skills</h3>
+             {uma.skills && uma.skills.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {uma.skills.map((skill, idx) => (
+                    <div key={idx} style={{ borderLeft: '4px solid #f1c40f', backgroundColor: '#fdfbf2', padding: '12px', borderRadius: '0 6px 6px 0' }}>
+                        <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#2c3e50' }}>{skill.name}</div>
+                        <div style={{ fontSize: '13px', color: '#7f8c8d', marginTop: '4px' }}>{skill.description}</div>
+                    </div>
+                ))}
+                </div>
+             ) : (
+                <div style={{ color: '#95a5a6', fontStyle: 'italic' }}>No special skills acquired yet.</div>
+             )}
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Game Log */}
-        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px' }}>
-          <h3 style={{ borderBottom: '2px solid #eee', paddingBottom: '10px', marginTop: 0 }}>📜 Race History</h3>
+        <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+          <h3 style={sectionHeaderStyle}>📜 Race History Log</h3>
           
           {uma.history && uma.history.length > 0 ? (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '2px solid #eee' }}>
-                  <th style={{ padding: '8px' }}>Year</th>
-                  <th style={{ padding: '8px' }}>Race</th>
-                  <th style={{ padding: '8px' }}>Place</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...uma.history].reverse().map((race, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '8px', color: '#7f8c8d' }}>Y{race.year}-W{race.week}</td>
-                    <td style={{ padding: '8px' }}>{race.raceName}</td>
-                    <td style={{ padding: '8px', fontWeight: 'bold', color: getRankColor(race.rank) }}>
-                      {race.rank === 1 ? '🏆 1st' : `${race.rank}th`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ maxHeight: '700px', overflowY: 'auto', paddingRight: '10px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                <thead>
+                    <tr style={{ textAlign: 'left', borderBottom: '2px solid #bdc3c7', color: '#7f8c8d' }}>
+                    <th style={{ padding: '10px 5px' }}>Date</th>
+                    <th style={{ padding: '10px 5px' }}>Event</th>
+                    <th style={{ padding: '10px 5px', textAlign: 'center' }}>Finish</th>
+                    <th style={{ padding: '10px 5px', textAlign: 'right' }}>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {[...uma.history].reverse().map((race, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid #ecf0f1' }}>
+                        <td style={{ padding: '12px 5px', color: '#95a5a6', fontSize: '12px' }}>Y{race.year}-W{race.week}</td>
+                        <td style={{ padding: '12px 5px', fontWeight: 'bold', color: '#34495e' }}>{race.raceName}</td>
+                        <td style={{ padding: '12px 5px', textAlign: 'center' }}>
+                            <span style={{ 
+                                backgroundColor: getRankBgColor(race.rank), color: getRankTextColor(race.rank),
+                                padding: '4px 10px', borderRadius: '12px', fontWeight: 'bold', fontSize: '12px'
+                            }}>
+                                {race.rank === 1 ? '1st 🏆' : `${race.rank}${getOrdinalSuffix(race.rank)}`}
+                            </span>
+                        </td>
+                        <td style={{ padding: '12px 5px', textAlign: 'right', fontFamily: 'monospace', color: '#7f8c8d' }}>
+                            {formatTime(race.time)}
+                        </td>
+                    </tr>
+                    ))}
+                </tbody>
+                </table>
+            </div>
           ) : (
-            <p style={{ color: '#999' }}>No races run yet.</p>
+            <div style={{ color: '#95a5a6', padding: '20px', textAlign: 'center', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
+                Has not run an official race yet.
+            </div>
           )}
         </div>
-
       </div>
 
       <div style={{ marginTop: '20px' }}>
-        <Link to="/roster" style={{ color: '#3498db', textDecoration: 'none' }}>← Back to Roster</Link>
+        <Link to="/roster" style={{ color: '#3498db', textDecoration: 'none', fontWeight: 'bold' }}>← Back to Roster</Link>
       </div>
     </div>
   );
 }
 
-// Helpers
-const badgeStyle = {
-  backgroundColor: '#ecf0f1', padding: '5px 10px', borderRadius: '15px', fontSize: '12px'
+const StatBar = ({ label, val }: { label: string, val: number }) => {
+    let grade = 'G'; let color = '#bdc3c7';
+    if (val >= 1000) { grade = 'S'; color = '#f1c40f'; }
+    else if (val >= 800) { grade = 'A'; color = '#e67e22'; }
+    else if (val >= 600) { grade = 'B'; color = '#3498db'; }
+    else if (val >= 400) { grade = 'C'; color = '#2ecc71'; }
+    
+    const fillPct = Math.min((val / 1200) * 100, 100);
+
+    return (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '13px', fontWeight: 'bold' }}>
+                <span style={{ color: '#7f8c8d', textTransform: 'uppercase' }}>{label}</span>
+                <span style={{ color }}>{grade} <span style={{color: '#2c3e50'}}>{Math.floor(val)}</span></span>
+            </div>
+            <div style={{ width: '100%', height: '8px', backgroundColor: '#ecf0f1', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ width: `${fillPct}%`, height: '100%', backgroundColor: color, borderRadius: '4px' }} />
+            </div>
+        </div>
+    );
 };
 
-function getGrade(val: number) {
-  if (val >= 8) return "S";
-  if (val >= 6) return "A";
-  if (val >= 4) return "B";
-  return "C";
-}
+const AptBadge = ({ label, val }: { label: string, val: number }) => {
+    let grade = "G"; let color = "#bdc3c7";
+    if (val >= 8) { grade = "S"; color = "#f1c40f"; }
+    else if (val >= 6) { grade = "A"; color = "#e67e22"; }
+    else if (val >= 4) { grade = "B"; color = "#3498db"; }
+    else if (val >= 2) { grade = "C"; color = "#2ecc71"; }
 
-const getRankColor = (rank: number) => {
-    if (rank === 1) return '#f1c40f'; // Gold
-    if (rank === 2) return '#bdc3c7'; // Silver
-    if (rank === 3) return '#e67e22'; // Bronze
-    return '#333';
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#f8f9fa', padding: '6px 12px', borderRadius: '6px', border: '1px solid #ecf0f1', minWidth: '45px' }}>
+            <span style={{ fontSize: '11px', color: '#7f8c8d', textTransform: 'uppercase', marginBottom: '2px' }}>{label}</span>
+            <span style={{ fontSize: '16px', fontWeight: '900', color }}>{grade}</span>
+        </div>
+    )
 };
+
+const formatTime = (rawSeconds?: number) => {
+    if (!rawSeconds) return '-';
+    const minutes = Math.floor(rawSeconds / 60);
+    const seconds = (rawSeconds % 60).toFixed(2);
+    return minutes > 0 ? `${minutes}:${seconds.padStart(5, '0')}` : `${seconds}s`;
+};
+
+const getRankBgColor = (rank: number) => {
+    if (rank === 1) return '#f1c40f'; 
+    if (rank === 2) return '#ecf0f1'; 
+    if (rank === 3) return '#e67e22'; 
+    return 'transparent';
+};
+const getRankTextColor = (rank: number) => {
+    if (rank === 1) return 'white';
+    if (rank === 2) return '#7f8c8d';
+    if (rank === 3) return 'white';
+    return '#95a5a6';
+};
+const getOrdinalSuffix = (i: number) => {
+    const j = i % 10, k = i % 100;
+    if (j === 1 && k !== 11) return "st";
+    if (j === 2 && k !== 12) return "nd";
+    if (j === 3 && k !== 13) return "rd";
+    return "th";
+};
+
+const sectionHeaderStyle = { borderBottom: '2px solid #ecf0f1', paddingBottom: '10px', marginTop: 0, color: '#2c3e50' };
+const radarLabelStyle = { position: 'absolute' as const, fontSize: '10px', fontWeight: 'bold', color: '#7f8c8d' };
+const aptGroupStyle = { display: 'flex', alignItems: 'center', borderBottom: '1px solid #ecf0f1', padding: '10px 0' };
+const aptLabelStyle = { width: '80px', fontWeight: 'bold', color: '#7f8c8d', fontSize: '13px', textTransform: 'uppercase' as const };
+const aptBadgeContainerStyle = { display: 'flex', gap: '8px', flexWrap: 'wrap' as const };

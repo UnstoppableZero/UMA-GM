@@ -18,6 +18,7 @@ export interface RaceHistoryRecord {
   winnerId: string;
   winnerName: string;
   time: number;
+  top3?: { id: string; name: string; time: number }[];
 }
 
 export interface NewsItem {

@@ -18,14 +18,35 @@ export interface RaceResult {
 export interface RaceOutcome {
   results: RaceResult[];
   log: LogEntry[];
-  // ADDED: TypeScript now knows these exist
   raceDistance?: number; 
-  surface?: 'Turf' | 'Dirt';
+  surface?: 'Turf' | 'Dirt'; // <-- Reverted to Capitalized for the UI!
 }
 
-// ADDED: surface parameter with a default of 'Turf'
+// HELPER: Convert number distance to string category for skill checking
+const getDistanceCategory = (dist: number): 'short' | 'mile' | 'medium' | 'long' => {
+    if (dist <= 1400) return 'short';
+    if (dist <= 1800) return 'mile';
+    if (dist <= 2400) return 'medium';
+    return 'long';
+};
+
+// HELPER: Find the horse's best strategy based on their aptitudes
+const getBestStrategy = (strats: Record<string, number>): 'runner' | 'leader' | 'betweener' | 'chaser' => {
+    let best = 'runner';
+    let max = 0;
+    for (const [key, val] of Object.entries(strats)) {
+        if (val > max) { max = val; best = key; }
+    }
+    return best as 'runner' | 'leader' | 'betweener' | 'chaser';
+};
+
+// <-- Reverted the surface parameter to Capitalized to fix DevTools
 export function simulateRace(runners: Uma[], distance: number = 2000, surface: 'Turf' | 'Dirt' = 'Turf'): RaceOutcome {
   const log: LogEntry[] = [];
+  const distCategory = getDistanceCategory(distance);
+  
+  // Convert the capitalized UI surface to lowercase strictly for the skill database check
+  const normalizedSurface = surface.toLowerCase() as 'turf' | 'dirt';
   
   // 1. START
   log.push({ message: getCommentary('start'), timePct: 0.02 });
@@ -43,10 +64,10 @@ export function simulateRace(runners: Uma[], distance: number = 2000, surface: '
 
   // 2. CALCULATE REALISTIC TIMES
   const calculatedResults = runners.map(uma => {
-    // A. BASE SPEED (World Record Pace is approx 18m/s, Average is 16m/s)
+    // A. BASE SPEED 
     let metersPerSecond = 16.0; 
 
-    // B. SPEED BONUS (0 to 1200 stat adds 0 to 2.5 m/s)
+    // B. SPEED BONUS 
     metersPerSecond += (uma.stats.speed / 1200) * 2.5;
 
     // C. STAMINA PENALTY
@@ -66,25 +87,39 @@ export function simulateRace(runners: Uma[], distance: number = 2000, surface: '
     // F. CALCULATE RAW TIME
     let time = distance / metersPerSecond; 
 
-    // G. SKILLS
+    // G. SKILL EVALUATION (NEW LOGIC)
     const activations: { skillName: string; timeOffset: number }[] = [];
-    if (uma.skills) {
+    const bestStrat = getBestStrategy(uma.aptitude?.strategy || { runner: 5, leader: 5, betweener: 5, chaser: 5 });
+
+    if (uma.skills && uma.skills.length > 0) {
       uma.skills.forEach(skill => {
+        let canTrigger = true;
+
+        // 1. Check strict conditions!
+        if (skill.conditions) {
+            // <-- We now use the lowercase normalizedSurface for this check
+            if (skill.conditions.surface && skill.conditions.surface !== normalizedSurface) canTrigger = false;
+            if (skill.conditions.distance && skill.conditions.distance !== distCategory) canTrigger = false;
+            if (skill.conditions.strategy && skill.conditions.strategy !== bestStrat) canTrigger = false;
+        }
+
+        // 2. If allowed to trigger, roll the dice (Wisdom gives a slight buff to trigger chance)
         const wisdomBonus = uma.stats.wisdom / 2000; 
-        if (Math.random() < (skill.triggerChance + wisdomBonus)) {
+        if (canTrigger && Math.random() < (skill.triggerChance + wisdomBonus)) {
+          // Effect logic: Time saved
           const timeSaved = skill.effectValue * 1.5; 
           time -= timeSaved;
           
           let timing = time * 0.5; 
           if (skill.type === 'start') timing = 1.0; 
           if (skill.type === 'speed') timing = time * 0.85; 
+          
           activations.push({ skillName: skill.name, timeOffset: timing });
         }
       });
     }
     
     const score = metersPerSecond; 
-
     return { uma, time, score, skillActivations: activations };
   });
 
@@ -123,6 +158,5 @@ export function simulateRace(runners: Uma[], distance: number = 2000, surface: '
     skillActivations: res.skillActivations
   }));
 
-  // ADDED: Return the distance and surface so the Viewer can read them
   return { results: finalResults, log, raceDistance: distance, surface };
 }

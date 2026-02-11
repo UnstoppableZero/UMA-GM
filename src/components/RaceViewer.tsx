@@ -24,6 +24,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
   const [finished, setFinished] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [speed, setSpeed] = useState(1); 
+  const speedRef = useRef(1); // Keeps track of speed without resetting the animation loop
   const [debugMode, setDebugMode] = useState(false); 
   
   // RESULTS & COMMENTARY
@@ -122,7 +123,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       lastTimestamp = timestamp;
 
       if (!finished) {
-        accumulatedTime += deltaTime * speed;
+        accumulatedTime += deltaTime * speedRef.current; // USING speedRef NOW
       }
 
       const raceProgress = accumulatedTime / maxTime; 
@@ -265,8 +266,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
     
-  // FIX 3: Add calibratedPoints to the dependency array so the loop always sees your latest clicks
-  }, [outcome, imageLoaded, runnerColors, speed, debugMode, trackConfig, raceDistance, raceSurface, calibratedPoints]); 
+  // REMOVED 'speed' FROM THIS ARRAY
+  }, [outcome, imageLoaded, runnerColors, debugMode, trackConfig, raceDistance, raceSurface, calibratedPoints]); 
 
   // --- CALIBRATION STUDIO LOGIC ---
   const handleCanvasClick = (e: React.MouseEvent) => {
@@ -315,13 +316,32 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
     }}>
       
-      {/* TOP BAR */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', width: '800px', marginBottom: '10px' }}>
+      {/* TOP BAR WITH SLIDER */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', width: '800px', marginBottom: '10px', alignItems: 'center' }}>
         <h2 style={{ color: 'white', margin: 0 }}>📺 LIVE: {trackConfig.name} ({raceSurface} {raceDistance}m)</h2>
-        <div style={{ display: 'flex', gap: '10px' }}>
-             <button onClick={() => setSpeed(1)} style={btnStyle(speed === 1)}>1x</button>
-             <button onClick={() => setSpeed(5)} style={btnStyle(speed === 5)}>5x</button>
-             <div style={{ width: '20px' }} />
+        
+        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+             
+             {/* THE NEW SLIDER */}
+             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#34495e', padding: '5px 15px', borderRadius: '50px', border: '1px solid #2c3e50' }}>
+               <label style={{ color: '#f1c40f', fontWeight: 'bold', minWidth: '85px', fontSize: '14px' }}>
+                 Speed: {speed.toFixed(1)}x
+               </label>
+               <input 
+                 type="range" 
+                 min="0.5" 
+                 max="5" 
+                 step="0.5" 
+                 value={speed} 
+                 onChange={(e) => {
+                    const newSpeed = Number(e.target.value);
+                    setSpeed(newSpeed);          // Updates the UI text
+                    speedRef.current = newSpeed; // Updates the animation instantly
+                 }}
+                 style={{ cursor: 'pointer', accentColor: '#3498db' }}
+               />
+             </div>
+
              <button onClick={() => {
                  setDebugMode(!debugMode);
                  setCalibratedPoints([]); 
