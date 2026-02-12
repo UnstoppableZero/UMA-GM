@@ -8,40 +8,30 @@ export function getQualifiedEntrants(allHorses: Uma[], race: RaceEvent): Uma[] {
     // 1. BASIC VALIDITY
     if (uma.status !== 'active' || !uma.stats || !uma.aptitude) return false;
     
-   // 2. STRICTOR ELIGIBILITY (The fix for "Phantom Losses")
+    // 2. STRICTOR ELIGIBILITY
     const wins = uma.career?.wins || 0;
-    const raceGrade = race.grade as string; // Cast to string to allow comparison
+    const raceGrade = race.grade as string; 
 
-    // Use a case-insensitive check or match your specific naming convention
-    if ((raceGrade === 'Maiden' || raceGrade === 'MDN') && wins > 0) {
-        return false;
-    }
-    
-    // Pre-Open/Listed often have win caps (e.g., 1-2 wins max)
-    if ((raceGrade === 'Pre-Open' || raceGrade === 'OP') && wins > 2) {
-        return false;
-    }
+    if ((raceGrade === 'Maiden' || raceGrade === 'MDN') && wins > 0) return false;
+    if ((raceGrade === 'Pre-Open' || raceGrade === 'OP') && wins > 2) return false;
 
     // 3. FITNESS CHECK
-    // If a horse is below 30% condition, they should not be forced into a race
-    if (uma.condition < 30) return false;
+    if ((uma.condition || 100) < 30) return false;
 
     // 4. AI INTENT CHECK
-    // This calls your AI logic to see if the distance/surface is a good fit
     if (!shouldAIEnterRace(uma, race)) return false;
     
     return true;
   });
 
-  // Score them for entry priority
+  // (Note: The sorting here is based on "Fit/Score", which is good for deciding WHO gets in,
+  // but bad for deciding rank. We will re-sort in createDivisions.)
   const scoredCandidates = candidates.map(uma => {
     let score = 0;
-    // Primary Stats
     score += uma.stats.speed;
     score += uma.stats.power * 0.5;
     score += uma.stats.stamina * 0.5;
     
-    // Distance Context
     if (race.distance >= 2400) {
       if (uma.stats.stamina < 400) score -= 300;
       score += uma.stats.stamina * 0.5; 
@@ -49,7 +39,6 @@ export function getQualifiedEntrants(allHorses: Uma[], race: RaceEvent): Uma[] {
       score += uma.stats.speed * 0.5; 
     }
 
-    // Surface Aptitude
     // @ts-ignore
     const dirtApt = uma.aptitude.surface?.dirt || 0;
     // @ts-ignore
@@ -58,19 +47,18 @@ export function getQualifiedEntrants(allHorses: Uma[], race: RaceEvent): Uma[] {
     if (race.surface === 'Dirt' && dirtApt < 4) score -= 800; 
     if (race.surface === 'Turf' && turfApt < 4) score -= 800;
 
-    // Condition Bonus: Fresh horses are more likely to be entered
     score += (uma.condition || 100) * 2;
 
     return { uma, score };
   });
 
-  // Sort by Score Descending (Highest scoring entries get priority if over-capacity)
+  // Sort by Score Descending to prioritize entry
   scoredCandidates.sort((a, b) => b.score - a.score);
   
   return scoredCandidates.map(c => c.uma);
 }
 
-// 2. CREATE DIVISIONS
+// 2. CREATE DIVISIONS (STRICT RATING TIERING)
 export function createDivisions(entrants: Uma[]): Uma[][] {
   const MAX_PER_RACE = 18;
   
@@ -78,13 +66,31 @@ export function createDivisions(entrants: Uma[]): Uma[][] {
     return [entrants];
   }
 
-  const numDivisions = Math.ceil(entrants.length / MAX_PER_RACE);
-  const divisions: Uma[][] = Array.from({ length: numDivisions }, () => []);
-
-  entrants.forEach((uma, index) => {
-    const divisionIndex = index % numDivisions;
-    divisions[divisionIndex].push(uma);
+  // 🔥 CRITICAL FIX: FORCE SORT BY TOTAL STATS (RATING) 🔥
+  // This ignores fatigue/suitability scores and strictly ranks by raw ability.
+  // This ensures Mejiro City (2135) is ALWAYS at the top of Division 1.
+  const sortedEntrants = [...entrants].sort((a, b) => {
+      const ratingA = (a.stats.speed + a.stats.stamina + a.stats.power + a.stats.guts + a.stats.wisdom);
+      const ratingB = (b.stats.speed + b.stats.stamina + b.stats.power + b.stats.guts + b.stats.wisdom);
+      return ratingB - ratingA; // Descending Order
   });
+
+  const numDivisions = Math.ceil(sortedEntrants.length / MAX_PER_RACE);
+  const divisions: Uma[][] = [];
+
+  // 🔥 FIX 2: CHUNKING INSTEAD OF SHUFFLING
+  // We slice the array into contiguous blocks. 
+  // 0-18 = Div 1 (Elite)
+  // 18-36 = Div 2 (Mid)
+  for (let i = 0; i < numDivisions; i++) {
+      const start = i * MAX_PER_RACE;
+      const end = start + MAX_PER_RACE;
+      const heat = sortedEntrants.slice(start, end);
+      
+      if (heat.length > 0) {
+          divisions.push(heat);
+      }
+  }
 
   return divisions;
 }

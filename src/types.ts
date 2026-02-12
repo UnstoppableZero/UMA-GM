@@ -38,6 +38,9 @@ export interface Uma {
 
   color?: string;   // Jersey/Image color
   age: number;
+  energy: number; // 0 to 100
+fatigue: number; // 0 to 100 (Higher = more injury risk)
+injuryWeeks: number; // Weeks remaining until recovered (0 = healthy)
   
   // NEW STATUS FIELDS
   status: 'active' | 'retired' | 'injured'; // <--- Added 'injured'

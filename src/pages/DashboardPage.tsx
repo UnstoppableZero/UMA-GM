@@ -9,7 +9,7 @@ import { RaceViewer } from '../components/RaceViewer';
 import { generateRival, generateUma } from '../generator'; 
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
-import { getQualifiedEntrants, createDivisions } from '../logic/matchmaking'; 
+import { getQualifiedEntrants, createDivisions, calculateOdds } from '../logic/matchmaking'; 
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -30,12 +30,16 @@ export function DashboardPage() {
   const [raceOutcome, setRaceOutcome] = useState<RaceOutcome | null>(null);
   const [raceLocation, setRaceLocation] = useState<string | undefined>(undefined);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [showOdds, setShowOdds] = useState(false);
+
+  const [raceQueue, setRaceQueue] = useState<RaceOutcome[]>([]);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
 
   useEffect(() => {
     let timer: number;
     if (isSimulating && !raceOutcome) {
       timer = window.setTimeout(() => {
-        advanceWeek();
+        advanceWeek(false);
       }, 800);
     }
     return () => clearTimeout(timer);
@@ -44,6 +48,7 @@ export function DashboardPage() {
   if (!gameState || !roster) return <div>Loading...</div>;
 
   const currentEvent = getRaceByWeek(gameState.week);
+  const currentQualifiedField = currentEvent ? getQualifiedEntrants(roster, currentEvent) : [];
 
   const initLeagueMode = async () => {
     if (!confirm("⚠️ This will WIPE everything and start 'UmaGM League Mode'. Ready?")) return;
@@ -64,30 +69,102 @@ export function DashboardPage() {
         horse.stats.speed += buff;
         horse.stats.stamina += buff;
         horse.stats.power += buff;
+        horse.energy = 100;
+        horse.fatigue = 0;
+        horse.injuryWeeks = 0;
         newRoster.push(horse);
       }
     }
     await db.umas.bulkAdd(newRoster);
-    alert("🏆 League Initialized with 10-Horse Rosters!");
+    alert("🏆 League Initialized!");
     window.location.reload();
   };
 
-  const advanceWeek = async () => {
+  const advanceWeek = async (viewRace = true) => {
+    setShowOdds(false);
+    
     const trainingUpdates = roster.map(uma => {
-      let aiFocus: 'speed' | 'stamina' | 'balanced' = 'balanced';
-      if (uma.stats.speed < 600) aiFocus = 'speed';
-      else if (uma.stats.stamina < 400) aiFocus = 'stamina';
-      return trainUma(uma, aiFocus);
+      // 1. INJURY RECOVERY
+      if (uma.injuryWeeks > 0) {
+        uma.injuryWeeks -= 1;
+        uma.energy = 100; // Injuries force full rest
+        uma.fatigue = 0;
+        return { uma, changes: ["Recovering..."] };
+      }
+
+      const isRacing = currentQualifiedField.some(q => q.id === uma.id);
+      
+      if (isRacing) {
+        // === SAFETY VALVE: SCRATCH IF FATIGUED ===
+        // If a horse is qualified but too tired (>60), force them to skip this race.
+        // This prevents the "Death Loop" of 100% fatigue during G1 season.
+        if ((uma.fatigue || 0) > 60) {
+            uma.energy = 100;
+            uma.fatigue = 0;
+            return { uma, changes: ["Scratched (Fatigue)"] };
+        }
+
+        // === RACING LOGIC (BUFFERED) ===
+        // Racing now costs significantly less fatigue to survive the G1 gauntlet
+        uma.energy = Math.max(0, (uma.energy || 100) - 20); // Was 30
+        uma.fatigue = Math.min(100, (uma.fatigue || 0) + 5); // Was 15 -> Now +5
+        
+        // Lower injury risks significantly
+        const riskRoll = Math.random() * 100;
+        // Only risky if fatigue is critically high (>85)
+        const fatiguePenalty = uma.fatigue > 85 ? 5 : 0; 
+        const threshold = 0.5 + fatiguePenalty; // Base risk 0.5%
+
+        if (riskRoll < threshold) {
+           uma.injuryWeeks = Math.floor(Math.random() * 3) + 2;
+           db.news.add({ 
+             year: gameState.year, week: gameState.week, 
+             message: `🚑 BREAKDOWN: ${uma.firstName} ${uma.lastName} injured during ${currentEvent?.name}.`, 
+             type: 'important' 
+           });
+        }
+        return { uma, changes: [] };
+
+      } else {
+        // === RESTING OR TRAINING ===
+        // If they are even slightly tired, let them fully recover.
+        // Threshold changed from 70 -> 50. Recovery changed from -25 -> Full Reset.
+        if ((uma.fatigue || 0) > 50 || (uma.energy || 0) < 50) {
+           uma.energy = 100; // Fully Restore Energy
+           uma.fatigue = 0;  // Fully Clear Fatigue
+           return { uma, changes: ["Full Rest"] };
+        } else {
+           // Training cost reduced
+           uma.energy = Math.max(0, (uma.energy || 100) - 10);
+           uma.fatigue = Math.min(100, (uma.fatigue || 0) + 2); // Was +5 -> Now +2
+           
+           let aiFocus: 'speed' | 'stamina' | 'balanced' = 'balanced';
+           if (uma.stats.speed < 600) aiFocus = 'speed';
+           else if (uma.stats.stamina < 400) aiFocus = 'stamina';
+           return trainUma(uma, aiFocus);
+        }
+      }
     });
 
     let currentMoney = gameState.money; 
 
     if (currentEvent) {
-      const allActiveHorses = trainingUpdates.map(t => t.uma);
+      // FIX: Filter the wrapper 't' FIRST, then map to 't.uma'
+      const allActiveHorses = trainingUpdates
+        .filter(t => t.uma.injuryWeeks === 0 && !t.changes.includes("Scratched (Fatigue)"))
+        .map(t => t.uma);
+        
       const qualified = getQualifiedEntrants(allActiveHorses, currentEvent);
-      const divisions = createDivisions(qualified);
+      
+      // Sort: Best Ratings First
+      qualified.sort((a, b) => {
+          const statsA = a.stats.speed + a.stats.stamina + a.stats.power + a.stats.guts + a.stats.wisdom;
+          const statsB = b.stats.speed + b.stats.stamina + b.stats.power + b.stats.guts + b.stats.wisdom;
+          return statsB - statsA; 
+      });
 
-      let mainEventOutcome: RaceOutcome | null = null;
+      const divisions = createDivisions(qualified);
+      const tempQueue: RaceOutcome[] = [];
       const allPastHistory = await db.raceHistory.toArray();
 
       for (let index = 0; index < divisions.length; index++) {
@@ -98,11 +175,10 @@ export function DashboardPage() {
         const divName = divisions.length > 1 ? ` (Div ${index + 1})` : "";
         const fullRaceName = currentEvent.name + divName;
         
-        if (index === 0) {
-            mainEventOutcome = outcome;
-            // @ts-ignore
-            setRaceLocation(currentEvent.location);
-        }
+        (outcome as any).displayName = fullRaceName;
+        tempQueue.push(outcome);
+        
+        if (index === 0) setRaceLocation(currentEvent.location);
 
         const top3Finishers = outcome.results.slice(0, 3).map(r => ({
             id: r.uma.id,
@@ -114,13 +190,8 @@ export function DashboardPage() {
           const trainingEntry = trainingUpdates.find(t => t.uma.id === res.uma.id);
           if (trainingEntry) {
             const uma = trainingEntry.uma;
-
             if (!uma.history) uma.history = [];
-            uma.history.push({
-              year: gameState.year, week: gameState.week, raceName: fullRaceName, rank: res.rank, time: res.time
-            });
-
-            // CRITICAL FIX: Career stats derived from History Log to prevent phantom increments
+            uma.history.push({ year: gameState.year, week: gameState.week, raceName: fullRaceName, rank: res.rank, time: res.time });
             uma.career.races = uma.history.length;
             uma.career.wins = uma.history.filter(h => h.rank === 1).length;
             uma.career.top3 = uma.history.filter(h => h.rank <= 3).length;
@@ -158,34 +229,22 @@ export function DashboardPage() {
               }
 
               if (isRecordBroken) {
-                  db.news.add({
-                      year: gameState.year, week: gameState.week,
-                      message: `⏱️ COURSE RECORD! ${fullName} shatters the ${fullRaceName} record with a time of ${formatTime(res.time)}!`,
-                      type: 'important' 
-                  });
+                  db.news.add({ year: gameState.year, week: gameState.week, message: `⏱️ COURSE RECORD! ${fullName} at ${fullRaceName}: ${formatTime(res.time)}!`, type: 'important' });
               } else {
-                  db.news.add({
-                      year: gameState.year, week: gameState.week,
-                      message: `🏆 [${currentEvent.grade}] ${fullName} wins the ${fullRaceName}!`,
-                      type: 'info'
-                  });
+                  db.news.add({ year: gameState.year, week: gameState.week, message: `🏆 [${currentEvent.grade}] ${fullName} wins the ${fullRaceName}!`, type: 'info' });
               }
-
-              if (winStreak === 3) db.news.add({ year: gameState.year, week: gameState.week, message: `🔥 HOT STREAK: ${fullName} has won 3 races in a row!`, type: 'info' });
-              else if (winStreak === 5) db.news.add({ year: gameState.year, week: gameState.week, message: `🔥🔥 UNSTOPPABLE: ${fullName} secures their 5th consecutive victory!`, type: 'important' });
-              else if (winStreak >= 7) db.news.add({ year: gameState.year, week: gameState.week, message: `👑 HISTORIC RUN: ${fullName} extends their legendary win streak to ${winStreak} in a row!`, type: 'important' });
-
-              db.raceHistory.add({
-                year: gameState.year, week: gameState.week, raceName: fullRaceName,
-                winnerId: res.uma.id, winnerName: fullName, time: res.time, top3: top3Finishers 
-              });
+              if (winStreak === 3) db.news.add({ year: gameState.year, week: gameState.week, message: `🔥 HOT STREAK: ${fullName} (3 in a row)`, type: 'info' });
+              db.raceHistory.add({ year: gameState.year, week: gameState.week, raceName: fullRaceName, winnerId: res.uma.id, winnerName: fullName, time: res.time, top3: top3Finishers });
             }
           }
         }
       }
-      if (mainEventOutcome) setRaceOutcome(mainEventOutcome);
-    } else {
-      setRaceOutcome(null);
+      
+      if (tempQueue.length > 0 && viewRace) {
+          setRaceQueue(tempQueue);
+          setCurrentQueueIndex(0);
+          setRaceOutcome(tempQueue[0]);
+      }
     }
 
     await db.umas.bulkPut(trainingUpdates.map(t => t.uma));
@@ -194,86 +253,52 @@ export function DashboardPage() {
     let newYear = gameState.year;
 
     if (newWeek > 52) { 
-      const allHistory = await db.raceHistory.toArray();
-      const currentYearRaces = allHistory.filter(h => h.year === gameState.year);
-      
-      const g1Winners: Record<string, number> = {};
-      currentYearRaces.forEach(race => {
-          const baseName = race.raceName.split(' (Div')[0];
-          const calEntry = FULL_CALENDAR.find(c => c.name === baseName);
-          if (calEntry?.grade === 'G1') {
-              g1Winners[race.winnerName] = (g1Winners[race.winnerName] || 0) + 1;
-          }
-      });
-
-      let hoty = { name: "None", wins: 0 };
-      for (const [name, wins] of Object.entries(g1Winners)) {
-          if (wins > hoty.wins) { hoty = { name, wins }; }
-      }
-
-      const allTeams = await db.teams.toArray();
-      const leadingStable = [...allTeams].sort((a, b) => (b.history?.earnings || 0) - (a.history?.earnings || 0))[0];
-
-      if (hoty.wins > 0) {
-          db.news.add({
-              year: gameState.year, week: 52,
-              message: `🌟 AWARDS: ${hoty.name} is crowned Horse of the Year with ${hoty.wins} G1 wins!`,
-              type: 'important'
-          });
-      }
-      
-      db.news.add({
-          year: gameState.year, week: 52,
-          message: `🚩 STABLE CHAMPION: ${leadingStable.name} finishes Year ${gameState.year} at the top of the earnings table!`,
-          type: 'info'
-      });
-
-      newWeek = 1;
-      newYear += 1;
-      setIsSimulating(false); 
-
+      newWeek = 1; newYear += 1; setIsSimulating(false); 
       const RETIREMENT_AGE = 6;
-      const retiringNames: string[] = [];
-      
       const processedRoster = trainingUpdates.map(t => {
         const uma = { ...t.uma };
         uma.age += 1;
-        if (uma.status === 'active' && uma.age > RETIREMENT_AGE) {
-            uma.status = 'retired';
-            retiringNames.push(`${uma.firstName} ${uma.lastName}`);
-        }
+        if (uma.status === 'active' && uma.age > RETIREMENT_AGE) uma.status = 'retired';
         return uma;
       });
       await db.umas.bulkPut(processedRoster);
-
-      if (retiringNames.length > 0) {
-        db.news.add({ year: newYear, week: 1, message: `🌅 Retirements: ${retiringNames.length} legends have left the track.`, type: 'retirement' });
-      }
-
-      const newRookies: Uma[] = [];
-      const activeHorses = processedRoster.filter(u => u.status === 'active');
-
-      for (const team of allTeams) {
-        const teamHorses = activeHorses.filter(u => u.teamId === team.id).length;
-        if (teamHorses < 10) {
-            const needed = 10 - teamHorses;
-            for (let i = 0; i < needed; i++) {
-                const buff = (team.prestige - 50) * 2;
-                const rookie = generateRival(team.id, 400 + buff);
-                rookie.age = 2; 
-                newRookies.push(rookie);
-            }
-        }
-      }
-      if (newRookies.length > 0) await db.umas.bulkAdd(newRookies);
     }
     await db.gameState.update(1, { week: newWeek, year: newYear, money: currentMoney });
+  };
+
+  const handleRaceClose = () => {
+      const nextIndex = currentQueueIndex + 1;
+      if (nextIndex < raceQueue.length) {
+          setCurrentQueueIndex(nextIndex);
+          setRaceOutcome(raceQueue[nextIndex]);
+      } else {
+          setRaceOutcome(null);
+          setRaceQueue([]);
+          setCurrentQueueIndex(0);
+      }
   };
 
   return (
     <div>
       {raceOutcome ? (
-        <RaceViewer outcome={raceOutcome} onClose={() => setRaceOutcome(null)} location={raceLocation as any} />
+        <div style={{ position: 'relative' }}>
+            {raceQueue.length > 1 && (
+                <div style={{ 
+                    position: 'fixed', top: '10px', left: '20px', zIndex: 4000, 
+                    color: 'white', backgroundColor: 'rgba(0,0,0,0.7)', 
+                    padding: '8px 16px', borderRadius: '4px', fontSize: '14px', 
+                    fontWeight: 'bold', border: '1px solid #555' 
+                }}>
+                    📡 Broadcast {currentQueueIndex + 1} of {raceQueue.length}
+                </div>
+            )}
+            <RaceViewer 
+                key={`race-${currentQueueIndex}`}
+                outcome={raceOutcome} 
+                onClose={handleRaceClose} 
+                location={raceLocation as any} 
+            />
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', marginBottom: '20px' }}>
            <div style={{ flex: 1 }}>
@@ -281,22 +306,36 @@ export function DashboardPage() {
               <div style={{ padding: '20px', backgroundColor: '#e3f2fd', borderLeft: '5px solid #2196f3', borderRadius: '8px', color: '#0d47a1' }}>
                 {currentEvent ? (
                   <div>
-                    <div style={{fontSize: '12px', fontWeight:'bold', color: '#7f8c8d'}}>THIS WEEK'S MAIN EVENT</div>
+                    <div style={{fontSize: '12px', fontWeight:'bold', color: '#7f8c8d'}}>NEXT MAIN EVENT</div>
                     <h2 style={{ marginTop: '5px', marginBottom: '5px', fontSize: '24px' }}>
                       <span style={{ backgroundColor: currentEvent.grade === 'G1' ? '#3498db' : '#95a5a6', color: 'white', padding: '2px 8px', borderRadius: '4px', marginRight: '10px', fontSize: '16px', verticalAlign: 'middle' }}>{currentEvent.grade}</span>
                       {currentEvent.name}
                     </h2>
-                    <div style={{marginBottom: '15px'}}>📍 {currentEvent.location} • {currentEvent.distance}m • 💰 ${currentEvent.purse.toLocaleString()}</div>
+                    <div style={{marginBottom: '10px'}}>📍 {currentEvent.location} • {currentEvent.distance}m</div>
+                    <button onClick={() => setShowOdds(!showOdds)} style={{ padding: '6px 12px', fontSize: '12px', backgroundColor: '#9b59b6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginBottom: '10px' }}>
+                      {showOdds ? '🙈 Hide Odds' : '🎲 View Field Odds'}
+                    </button>
+                    {showOdds && (
+                      <div style={{ backgroundColor: 'rgba(255,255,255,0.6)', padding: '10px', borderRadius: '8px', marginTop: '5px', maxHeight: '180px', overflowY: 'auto', border: '1px solid #bbdefb' }}>
+                        {currentQualifiedField.length > 0 ? currentQualifiedField.slice(0, 12).map(uma => (
+                          <div key={uma.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid rgba(0,0,0,0.05)', padding: '4px 0' }}>
+                            <span>{uma.firstName} {uma.lastName} {uma.fatigue > 60 ? '💢' : ''}</span>
+                            <span style={{ fontWeight: 'bold', color: (uma.energy || 100) < 40 ? '#e67e22' : '#2c3e50' }}>{calculateOdds(uma, currentQualifiedField)}</span>
+                          </div>
+                        )) : <div>No qualified entrants.</div>}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div><h3 style={{ marginTop: 0 }}>💪 Training Week</h3><p>No major races scheduled.</p></div>
                 )}
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={advanceWeek} style={{ marginTop: '10px', padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>▶ Play Week</button>
-                  <button onClick={() => setIsSimulating(!isSimulating)} style={{ marginTop: '10px', padding: '12px 24px', fontSize: '16px', backgroundColor: isSimulating ? '#e67e22' : '#27ae60', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>▶ Play Week</button>
+                  <button onClick={() => advanceWeek(false)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#7f8c8d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>⏭️ Quick Sim</button>
+                  <button onClick={() => setIsSimulating(!isSimulating)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: isSimulating ? '#e67e22' : '#27ae60', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                     {isSimulating ? '⏸ Pause Sim' : '⏩ Simulate Year'}
                   </button>
-                  <button onClick={initLeagueMode} style={{ marginTop: '10px', padding: '12px 24px', fontSize: '16px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏆 Reset League</button>
+                  <button onClick={initLeagueMode} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏆 Reset League</button>
                 </div>
               </div>
            </div>
@@ -307,11 +346,11 @@ export function DashboardPage() {
                   {latestNews.map(item => (
                     <li key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0', fontSize: '14px' }}>
                       <span style={{ fontWeight: 'bold', color: '#999', marginRight: '10px' }}>Y{item.year}-W{item.week}</span>
-                      <span style={{ color: item.type === 'important' ? '#e67e22' : item.type === 'retirement' ? '#7f8c8d' : '#2c3e50', fontWeight: item.type === 'important' ? 'bold' : 'normal' }}>{item.message}</span>
+                      <span style={{ color: item.type === 'important' ? '#e67e22' : '#2c3e50' }}>{item.message}</span>
                     </li>
                   ))}
                 </ul>
-              ) : <p style={{ color: '#ccc' }}>Waiting for history to be written...</p>}
+              ) : <p style={{ color: '#ccc' }}>Waiting for history...</p>}
            </div>
         </div>
       )}

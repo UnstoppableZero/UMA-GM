@@ -15,7 +15,6 @@ export function ProfilePage() {
   const ovrColor = getOVRColor(ovr);
 
   // --- DERIVE ACCURATE RECORD FROM HISTORY ---
-  // We calculate this on the fly to ignore any corrupted career counters.
   const history = uma.history || [];
   const wins = history.filter(h => h.rank === 1).length;
   const races = history.length;
@@ -63,6 +62,9 @@ export function ProfilePage() {
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
       
+      {/* =========================================
+          HEADER: THE OVR BANNER & VITALS
+      ========================================= */}
       <div style={{ 
         backgroundColor: 'white', padding: '20px', borderRadius: '12px', 
         marginBottom: '20px', 
@@ -70,23 +72,51 @@ export function ProfilePage() {
         boxShadow: '0 4px 15px rgba(0,0,0,0.05)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center' 
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '25px' }}>
+            {/* MASSIVE OVR BADGE */}
             <div style={{ 
                 backgroundColor: ovrColor, color: 'white', 
-                width: '70px', height: '70px', borderRadius: '12px',
+                width: '75px', height: '75px', borderRadius: '12px',
                 display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
                 boxShadow: `0 4px 10px ${ovrColor}40`
             }}>
                 <span style={{ fontSize: '12px', fontWeight: 'bold', opacity: 0.9 }}>OVR</span>
-                <span style={{ fontSize: '32px', fontWeight: '900', lineHeight: '1' }}>{ovr}</span>
+                <span style={{ fontSize: '34px', fontWeight: '900', lineHeight: '1' }}>{ovr}</span>
             </div>
 
             <div>
                 <h1 style={{ margin: '0 0 5px 0', color: '#2c3e50', fontSize: '32px' }}>{uma.firstName} {uma.lastName}</h1>
-                <div style={{ fontSize: '15px', color: '#7f8c8d', display: 'flex', gap: '15px', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '15px', color: '#7f8c8d', display: 'flex', gap: '15px', fontWeight: 'bold', alignItems: 'center' }}>
                     <span>🎂 Age {uma.age}</span>
                     <span style={{color: '#34495e'}}>🏆 {wins}-{losses} Record</span>
                     <span style={{color: '#27ae60'}}>💰 ${uma.career.earnings.toLocaleString()}</span>
+                    {uma.injuryWeeks > 0 && (
+                      <span style={{ backgroundColor: '#e74c3c', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
+                        🚑 INJURED ({uma.injuryWeeks}w)
+                      </span>
+                    )}
+                </div>
+
+                {/* VITALS BARS */}
+                <div style={{ display: 'flex', gap: '20px', marginTop: '12px' }}>
+                    <div style={{ width: '140px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', textTransform: 'uppercase', color: '#95a5a6', marginBottom: '4px', fontWeight: 'bold' }}>
+                          <span>Energy</span>
+                          <span>{uma.energy || 0}%</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', backgroundColor: '#eee', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${uma.energy || 0}%`, height: '100%', backgroundColor: (uma.energy || 0) < 40 ? '#f1c40f' : '#2ecc71', transition: 'width 0.3s ease' }} />
+                        </div>
+                    </div>
+                    <div style={{ width: '140px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', textTransform: 'uppercase', color: '#95a5a6', marginBottom: '4px', fontWeight: 'bold' }}>
+                          <span>Fatigue</span>
+                          <span>{uma.fatigue || 0}%</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', backgroundColor: '#eee', borderRadius: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${uma.fatigue || 0}%`, height: '100%', backgroundColor: (uma.fatigue || 0) > 60 ? '#e74c3c' : '#3498db', transition: 'width 0.3s ease' }} />
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -99,6 +129,9 @@ export function ProfilePage() {
         </button>
       </div>
 
+      {/* =========================================
+          TROPHY CASE
+      ========================================= */}
       {uma.trophies && uma.trophies.length > 0 && (
         <div style={{ backgroundColor: '#fff3cd', padding: '15px', marginBottom: '20px', borderRadius: '12px', border: '1px solid #ffeeba', textAlign: 'center' }}>
           <h3 style={{ margin: '0 0 10px 0', color: '#856404' }}>🏆 Trophy Case</h3>
@@ -112,10 +145,14 @@ export function ProfilePage() {
         </div>
       )}
 
+      {/* =========================================
+          MAIN GRID
+      ========================================= */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
+          {/* STATS & RADAR CARD */}
           <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
             <h3 style={sectionHeaderStyle}>📊 Core Attributes</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -133,6 +170,7 @@ export function ProfilePage() {
             </div>
           </div>
 
+          {/* APTITUDE MATRIX */}
           <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
             <h3 style={sectionHeaderStyle}>🧩 Aptitude Matrix</h3>
             
@@ -165,6 +203,7 @@ export function ProfilePage() {
             </div>
           </div>
 
+          {/* SKILLS */}
           <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
              <h3 style={sectionHeaderStyle}>⚡ Special Skills</h3>
              {uma.skills && uma.skills.length > 0 ? (
@@ -180,8 +219,10 @@ export function ProfilePage() {
                 <div style={{ color: '#95a5a6', fontStyle: 'italic' }}>No special skills acquired yet.</div>
              )}
           </div>
+
         </div>
 
+        {/* RIGHT COLUMN: Game Log */}
         <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
           <h3 style={sectionHeaderStyle}>📜 Race History Log</h3>
           
@@ -223,6 +264,7 @@ export function ProfilePage() {
             </div>
           )}
         </div>
+
       </div>
 
       <div style={{ marginTop: '20px' }}>
@@ -232,6 +274,7 @@ export function ProfilePage() {
   );
 }
 
+// Sub-components and styles remain as defined in your provided snippet
 const StatBar = ({ label, val }: { label: string, val: number }) => {
     let grade = 'G'; let color = '#bdc3c7';
     if (val >= 1000) { grade = 'S'; color = '#f1c40f'; }
