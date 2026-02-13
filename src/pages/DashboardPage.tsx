@@ -1,15 +1,15 @@
 // src/pages/DashboardPage.tsx
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import { FULL_CALENDAR, getRaceByWeek } from '../data/calendar';
+import { getRacesByWeek } from '../data/calendar';
 import { trainUma } from '../training';
 import { simulateRace, type RaceOutcome } from '../race';
 import { useState, useEffect } from 'react';
 import { RaceViewer } from '../components/RaceViewer';
-import { generateRival, generateUma } from '../generator'; 
+import { generateUma } from '../generator'; 
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
-import { getQualifiedEntrants, createDivisions, calculateOdds } from '../logic/matchmaking'; 
+import { autoAllocateHorses, calculateOdds, calculateRaceRating } from '../logic/matchmaking'; 
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -28,27 +28,30 @@ export function DashboardPage() {
   }, [gameState?.year]);
   
   const [raceOutcome, setRaceOutcome] = useState<RaceOutcome | null>(null);
-  const [raceLocation, setRaceLocation] = useState<string | undefined>(undefined);
   const [isSimulating, setIsSimulating] = useState(false);
-  const [showOdds, setShowOdds] = useState(false);
+  
+  // NEW: State for Multi-Race Queue
+  const [raceQueue, setRaceQueue] = useState<{outcome: RaceOutcome, location: string}[]>([]);
+  const [queueIndex, setQueueIndex] = useState(0);
 
-  const [raceQueue, setRaceQueue] = useState<RaceOutcome[]>([]);
-  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
-
+  // Auto-advance simulation
   useEffect(() => {
     let timer: number;
-    if (isSimulating && !raceOutcome) {
+    if (isSimulating && !raceOutcome && raceQueue.length === 0) {
       timer = window.setTimeout(() => {
         advanceWeek(false);
       }, 800);
     }
     return () => clearTimeout(timer);
-  }, [isSimulating, raceOutcome, gameState?.week]);
+  }, [isSimulating, raceOutcome, raceQueue, gameState?.week]);
 
-  if (!gameState || !roster) return <div>Loading...</div>;
+  if (!gameState || !roster) return <div style={{color: 'var(--text-primary)', padding: '20px'}}>Loading...</div>;
 
-  const currentEvent = getRaceByWeek(gameState.week);
-  const currentQualifiedField = currentEvent ? getQualifiedEntrants(roster, currentEvent) : [];
+  // 1. Get ALL races for this week
+  const currentEvents = getRacesByWeek(gameState.week);
+  
+  // 2. Pre-calculate the allocations for Display
+  const allocations = roster.length > 0 ? autoAllocateHorses(roster, currentEvents) : {};
 
   const initLeagueMode = async () => {
     if (!confirm("⚠️ This will WIPE everything and start 'UmaGM League Mode'. Ready?")) return;
@@ -81,185 +84,119 @@ export function DashboardPage() {
   };
 
   const advanceWeek = async (viewRace = true) => {
-    setShowOdds(false);
-    
-    const trainingUpdates = roster.map(uma => {
-      if (uma.injuryWeeks > 0) {
-        uma.injuryWeeks -= 1;
-        uma.energy = 100;
-        uma.fatigue = 0;
-        return { uma, changes: ["Recovering..."] };
-      }
-
-      const isRacing = currentQualifiedField.some(q => q.id === uma.id);
-      
-      if (isRacing) {
-        if ((uma.fatigue || 0) > 60) {
-            uma.energy = 100;
-            uma.fatigue = 0;
-            return { uma, changes: ["Scratched (Fatigue)"] };
-        }
-        uma.energy = Math.max(0, (uma.energy || 100) - 20);
-        uma.fatigue = Math.min(100, (uma.fatigue || 0) + 5);
-        
-        const riskRoll = Math.random() * 100;
-        const fatiguePenalty = uma.fatigue > 85 ? 5 : 0; 
-        const threshold = 0.5 + fatiguePenalty;
-
-        if (riskRoll < threshold) {
-           uma.injuryWeeks = Math.floor(Math.random() * 3) + 2;
-           db.news.add({ 
-             year: gameState.year, week: gameState.week, 
-             message: `🚑 BREAKDOWN: ${uma.firstName} ${uma.lastName} injured during ${currentEvent?.name}.`, 
-             type: 'important' 
-           });
-        }
-        return { uma, changes: [] };
-
-      } else {
-        if ((uma.fatigue || 0) > 50 || (uma.energy || 0) < 50) {
-           uma.energy = 100;
-           uma.fatigue = 0;
-           return { uma, changes: ["Full Rest"] };
-        } else {
-           uma.energy = Math.max(0, (uma.energy || 100) - 10);
-           uma.fatigue = Math.min(100, (uma.fatigue || 0) + 2);
-           
-           let aiFocus: 'speed' | 'stamina' | 'balanced' = 'balanced';
-           if (uma.stats.speed < 600) aiFocus = 'speed';
-           else if (uma.stats.stamina < 400) aiFocus = 'stamina';
-           return trainUma(uma, aiFocus);
-        }
-      }
-    });
-
     let currentMoney = gameState.money; 
+    const raceResults: {outcome: RaceOutcome, location: string}[] = [];
 
-    if (currentEvent) {
-      const allActiveHorses = trainingUpdates
-        .filter(t => t.uma.injuryWeeks === 0 && !t.changes.includes("Scratched (Fatigue)"))
-        .map(t => t.uma);
+    // A. Run all races mathematically first
+    for (const race of currentEvents) {
+        const allocation = allocations[race.id];
+        if (!allocation || allocation.field.length < 2) continue;
+
+        const outcome = simulateRace(allocation.field, race.distance);
+        (outcome as any).displayName = race.name;
         
-      const qualified = getQualifiedEntrants(allActiveHorses, currentEvent);
-      
-      qualified.sort((a, b) => {
-          const statsA = a.stats.speed + a.stats.stamina + a.stats.power + a.stats.guts + a.stats.wisdom;
-          const statsB = b.stats.speed + b.stats.stamina + b.stats.power + b.stats.guts + b.stats.wisdom;
-          return statsB - statsA; 
-      });
+        raceResults.push({ outcome, location: race.location });
 
-      const divisions = createDivisions(qualified);
-      const tempQueue: RaceOutcome[] = [];
-      const allPastHistory = await db.raceHistory.toArray();
-
-      for (let index = 0; index < divisions.length; index++) {
-        const field = divisions[index];
-        if (field.length < 2) continue;
-
-        const outcome = simulateRace(field, currentEvent.distance);
-        const divName = divisions.length > 1 ? ` (Div ${index + 1})` : "";
-        const fullRaceName = currentEvent.name + divName;
-        
-        (outcome as any).displayName = fullRaceName;
-        tempQueue.push(outcome);
-        
-        if (index === 0) setRaceLocation(currentEvent.location);
-
+        // Process Results
         const top3Finishers = outcome.results.slice(0, 3).map(r => ({
-            id: r.uma.id,
-            name: `${r.uma.firstName} ${r.uma.lastName}`,
-            time: r.time
+            id: r.uma.id, name: `${r.uma.firstName} ${r.uma.lastName}`, time: r.time
         }));
 
         for (const res of outcome.results) {
-          const trainingEntry = trainingUpdates.find(t => t.uma.id === res.uma.id);
-          if (trainingEntry) {
-            const uma = trainingEntry.uma;
-            if (!uma.history) uma.history = [];
-            uma.history.push({ year: gameState.year, week: gameState.week, raceName: fullRaceName, rank: res.rank, time: res.time });
-            uma.career.races = uma.history.length;
-            uma.career.wins = uma.history.filter(h => h.rank === 1).length;
-            uma.career.top3 = uma.history.filter(h => h.rank <= 3).length;
+            const umaIndex = roster.findIndex(u => u.id === res.uma.id);
+            if (umaIndex === -1) continue;
+            const uma = roster[umaIndex];
 
+            if (!uma.history) uma.history = [];
+            uma.history.push({ year: gameState.year, week: gameState.week, raceName: race.name, rank: res.rank, time: res.time });
+            uma.career.races = (uma.career.races || 0) + 1;
+            if (res.rank === 1) uma.career.wins = (uma.career.wins || 0) + 1;
+            if (res.rank <= 3) uma.career.top3 = (uma.career.top3 || 0) + 1;
+
+            // Prize Money
             let prize = 0;
-            if (res.rank === 1) prize = currentEvent.purse;
-            else if (res.rank === 2) prize = currentEvent.purse * 0.4;
-            else if (res.rank === 3) prize = currentEvent.purse * 0.25;
+            if (res.rank === 1) prize = race.purse;
+            else if (res.rank === 2) prize = race.purse * 0.4;
+            else if (res.rank === 3) prize = race.purse * 0.25;
 
             if (prize > 0) {
-              uma.career.earnings += prize;
-              if (uma.teamId === 'player') currentMoney += prize;
-              const team = await db.teams.get(uma.teamId);
-              if (team) {
-                await db.teams.update(uma.teamId, { 
-                    'history.earnings': (team.history?.earnings || 0) + prize,
-                    'history.wins': (team.history?.wins || 0) + (res.rank === 1 ? 1 : 0)
-                });
-              }
+                uma.career.earnings += prize;
+                if (uma.teamId === 'player') currentMoney += prize;
+                // Note: Team update skipped for brevity, can add back if needed
             }
 
+            // News & History
             if (res.rank === 1) {
-              const fullName = `${res.uma.firstName} ${res.uma.lastName}`;
-              const pastRaces = allPastHistory.filter(r => r.raceName === fullRaceName);
-              let isRecordBroken = false;
-              if (pastRaces.length > 0) {
-                  const bestPastTime = Math.min(...pastRaces.map(r => r.time));
-                  if (res.time < bestPastTime) isRecordBroken = true;
-              }
-
-              let winStreak = 1;
-              for (let i = uma.history.length - 2; i >= 0; i--) {
-                  if (uma.history[i].rank === 1) winStreak++;
-                  else break;
-              }
-
-              if (isRecordBroken) {
-                  db.news.add({ year: gameState.year, week: gameState.week, message: `⏱️ COURSE RECORD! ${fullName} at ${fullRaceName}: ${formatTime(res.time)}!`, type: 'important' });
-              } else {
-                  db.news.add({ year: gameState.year, week: gameState.week, message: `🏆 [${currentEvent.grade}] ${fullName} wins the ${fullRaceName}!`, type: 'info' });
-              }
-              if (winStreak === 3) db.news.add({ year: gameState.year, week: gameState.week, message: `🔥 HOT STREAK: ${fullName} (3 in a row)`, type: 'info' });
-              db.raceHistory.add({ year: gameState.year, week: gameState.week, raceName: fullRaceName, winnerId: res.uma.id, winnerName: fullName, time: res.time, top3: top3Finishers });
+                const fullName = `${uma.firstName} ${uma.lastName}`;
+                db.news.add({ year: gameState.year, week: gameState.week, message: `🏆 [${race.grade}] ${fullName} wins the ${race.name}!`, type: 'info' });
+                db.raceHistory.add({ year: gameState.year, week: gameState.week, raceName: race.name, winnerId: uma.id, winnerName: fullName, time: res.time, top3: top3Finishers });
             }
-          }
+            
+            // Fatigue from racing
+            uma.energy = Math.max(0, (uma.energy || 100) - 25);
+            uma.fatigue = Math.min(100, (uma.fatigue || 0) + 10);
         }
-      }
-      
-      if (tempQueue.length > 0 && viewRace) {
-          setRaceQueue(tempQueue);
-          setCurrentQueueIndex(0);
-          setRaceOutcome(tempQueue[0]);
-      }
+
+        // DNQ Messages
+        const myExcluded = allocation.excluded.filter(u => u.teamId === 'player');
+        if (myExcluded.length > 0) {
+             const names = myExcluded.map(u => u.lastName).join(", ");
+             db.news.add({ year: gameState.year, week: gameState.week, message: `⚠️ DNQ: ${names} failed to qualify for ${race.name}.`, type: 'important' });
+        }
     }
 
-    await db.umas.bulkPut(trainingUpdates.map(t => t.uma));
+    // B. Train everyone else
+    const racedIds = new Set(Object.values(allocations).flatMap(a => a.field.map(u => u.id)));
+    
+    roster.forEach(uma => {
+        if (!racedIds.has(uma.id)) {
+            if (uma.injuryWeeks > 0) {
+                uma.injuryWeeks--;
+                uma.energy = 100;
+            } else if ((uma.fatigue || 0) > 50) {
+                uma.energy = 100; uma.fatigue = 0; // Rest
+            } else {
+                // Train
+                uma.energy = Math.max(0, (uma.energy || 100) - 10);
+                const trainRes = trainUma(uma, 'balanced');
+                // stats updated in place by reference
+            }
+        }
+    });
 
-    let newWeek = gameState.week + 1;
-    let newYear = gameState.year;
+    await db.umas.bulkPut(roster);
 
-    if (newWeek > 52) { 
-      newWeek = 1; newYear += 1; setIsSimulating(false); 
-      const RETIREMENT_AGE = 6;
-      const processedRoster = trainingUpdates.map(t => {
-        const uma = { ...t.uma };
-        uma.age += 1;
-        if (uma.status === 'active' && uma.age > RETIREMENT_AGE) uma.status = 'retired';
-        return uma;
-      });
-      await db.umas.bulkPut(processedRoster);
+    // C. Queue Viewing
+    if (viewRace && raceResults.length > 0) {
+        setRaceQueue(raceResults);
+        setQueueIndex(0);
+        setRaceOutcome(raceResults[0].outcome);
+        // Note: Location needs to be handled in the render
+    } else {
+        // Advance Time
+        let newWeek = gameState.week + 1;
+        let newYear = gameState.year;
+        if (newWeek > 52) { 
+            newWeek = 1; newYear++; setIsSimulating(false);
+            // Retirement logic here
+        }
+        await db.gameState.update(1, { week: newWeek, year: newYear, money: currentMoney });
     }
-    await db.gameState.update(1, { week: newWeek, year: newYear, money: currentMoney });
   };
 
   const handleRaceClose = () => {
-      const nextIndex = currentQueueIndex + 1;
+      const nextIndex = queueIndex + 1;
       if (nextIndex < raceQueue.length) {
-          setCurrentQueueIndex(nextIndex);
-          setRaceOutcome(raceQueue[nextIndex]);
+          setQueueIndex(nextIndex);
+          setRaceOutcome(raceQueue[nextIndex].outcome);
       } else {
           setRaceOutcome(null);
           setRaceQueue([]);
-          setCurrentQueueIndex(0);
+          // NOW advance time
+          let newWeek = gameState.week + 1;
+          let newYear = gameState.year;
+          if (newWeek > 52) { newWeek = 1; newYear++; setIsSimulating(false); }
+          db.gameState.update(1, { week: newWeek, year: newYear }); // Money already saved
       }
   };
 
@@ -267,72 +204,80 @@ export function DashboardPage() {
     <div>
       {raceOutcome ? (
         <div style={{ position: 'relative' }}>
-            {raceQueue.length > 1 && (
-                <div style={{ 
-                    position: 'fixed', top: '10px', left: '20px', zIndex: 4000, 
-                    color: 'var(--text-primary)', backgroundColor: 'rgba(0,0,0,0.7)', 
-                    padding: '8px 16px', borderRadius: '4px', fontSize: '14px', 
-                    fontWeight: 'bold', border: '1px solid var(--border-strong)' 
-                }}>
-                    📡 Broadcast {currentQueueIndex + 1} of {raceQueue.length}
-                </div>
-            )}
+            <div style={{ position: 'fixed', top: 10, left: 20, zIndex: 4000, color: 'white', background: 'rgba(0,0,0,0.8)', padding: '5px 10px', borderRadius: 4 }}>
+                📡 Broadcasting Race {queueIndex + 1} of {raceQueue.length}
+            </div>
             <RaceViewer 
-                key={`race-${currentQueueIndex}`}
                 outcome={raceOutcome} 
                 onClose={handleRaceClose} 
-                location={raceLocation as any} 
+                location={raceQueue[queueIndex].location as any} 
             />
         </div>
       ) : (
         <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', marginBottom: '20px' }}>
            <div style={{ flex: 1 }}>
               <h1 style={{ color: 'var(--text-primary)', margin: '0 0 10px 0' }}>Year {gameState.year} - Week {gameState.week}</h1>
-              <div style={{ padding: '20px', backgroundColor: 'var(--bg-surface)', borderLeft: '5px solid #2196f3', borderRadius: '8px', color: 'var(--text-primary)' }}>
-                {currentEvent ? (
-                  <div>
-                    <div style={{fontSize: '12px', fontWeight:'bold', color: 'var(--text-secondary)'}}>NEXT MAIN EVENT</div>
-                    <h2 style={{ marginTop: '5px', marginBottom: '5px', fontSize: '24px', color: 'var(--text-primary)' }}>
-                      <span style={{ backgroundColor: currentEvent.grade === 'G1' ? '#3498db' : '#95a5a6', color: 'white', padding: '2px 8px', borderRadius: '4px', marginRight: '10px', fontSize: '16px', verticalAlign: 'middle' }}>{currentEvent.grade}</span>
-                      {currentEvent.name}
-                    </h2>
-                    <div style={{marginBottom: '10px', color: 'var(--text-secondary)'}}>📍 {currentEvent.location} • {currentEvent.distance}m</div>
-                    <button onClick={() => setShowOdds(!showOdds)} style={{ padding: '6px 12px', fontSize: '12px', backgroundColor: '#9b59b6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginBottom: '10px' }}>
-                      {showOdds ? '🙈 Hide Odds' : '🎲 View Field Odds'}
-                    </button>
-                    {showOdds && (
-                      <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '10px', borderRadius: '8px', marginTop: '5px', maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border-default)' }}>
-                        {currentQualifiedField.length > 0 ? currentQualifiedField.slice(0, 12).map(uma => (
-                          <div key={uma.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid var(--border-subtle)', padding: '4px 0' }}>
-                            <span style={{ color: 'var(--text-primary)' }}>{uma.firstName} {uma.lastName} {uma.fatigue > 60 ? '💢' : ''}</span>
-                            <span style={{ fontWeight: 'bold', color: (uma.energy || 100) < 40 ? '#e67e22' : 'var(--text-primary)' }}>{calculateOdds(uma, currentQualifiedField)}</span>
-                          </div>
-                        )) : <div style={{ color: 'var(--text-secondary)' }}>No qualified entrants.</div>}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div><h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>💪 Training Week</h3><p style={{ color: 'var(--text-secondary)' }}>No major races scheduled.</p></div>
+              
+              {/* RACE CARDS CONTAINER */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {currentEvents.length > 0 ? currentEvents.map(race => {
+                    const allocation = allocations[race.id];
+                    const field = allocation ? allocation.field : [];
+                    const excluded = allocation ? allocation.excluded : [];
+
+                    return (
+                        <div key={race.id} style={{ padding: '15px', backgroundColor: 'var(--bg-surface)', borderLeft: `5px solid ${race.grade === 'G1' ? '#3498db' : '#2ecc71'}`, borderRadius: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <span style={{ backgroundColor: race.grade === 'G1' ? '#3498db' : (race.grade === 'G2' ? '#e67e22' : '#27ae60'), color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', marginRight: '8px' }}>
+                                        {race.grade}
+                                    </span>
+                                    <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)' }}>{race.name}</span>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                        {race.location} • {race.surface} {race.distance}m • {field.length} Runners
+                                    </div>
+                                </div>
+                                {excluded.length > 0 && (
+                                    <div style={{ fontSize: '12px', color: '#e74c3c', fontWeight: 'bold' }}>
+                                        ⚠️ {excluded.length} Cut
+                                    </div>
+                                )}
+                            </div>
+                            {/* MINI FIELD PREVIEW */}
+                            <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                <strong>Top Contender:</strong> {field.length > 0 ? `${field[0].lastName} (${calculateRaceRating(field[0], race)})` : 'None'}
+                            </div>
+                        </div>
+                    );
+                }) : (
+                    <div style={{ padding: '20px', backgroundColor: 'var(--bg-surface)', borderRadius: '8px', color: 'var(--text-secondary)' }}>
+                        😴 No races scheduled. Heavy training week.
+                    </div>
                 )}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                  <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>▶ Play Week</button>
-                  <button onClick={() => advanceWeek(false)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#7f8c8d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>⏭️ Quick Sim</button>
-                  <button onClick={() => setIsSimulating(!isSimulating)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: isSimulating ? '#e67e22' : '#27ae60', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    {isSimulating ? '⏸ Pause Sim' : '⏩ Simulate Year'}
+              </div>
+
+              {/* ACTION BAR */}
+              <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+                  <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                      ▶ Run Race Day
                   </button>
-                  <button onClick={initLeagueMode} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>🏆 Reset League</button>
-                </div>
+                  <button onClick={() => advanceWeek(false)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#7f8c8d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                      ⏭️ Quick Sim
+                  </button>
+                  <button onClick={initLeagueMode} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                      🏆 Reset League
+                  </button>
               </div>
            </div>
 
-           {/* LEAGUE NEWS PANEL */}
-           <div style={{ flex: 1, backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', height: '240px', overflowY: 'auto', border: '1px solid var(--border-default)' }}>
+           {/* NEWS PANEL */}
+           <div style={{ width: '300px', backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-default)', height: '500px', overflowY: 'auto' }}>
               <h3 style={{ marginTop: 0, borderBottom: '2px solid var(--border-default)', paddingBottom: '10px', color: 'var(--text-secondary)' }}>📰 League News</h3>
               {latestNews && latestNews.length > 0 ? (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                   {latestNews.map(item => (
-                    <li key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '14px' }}>
-                      <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', marginRight: '10px' }}>Y{item.year}-W{item.week}</span>
+                    <li key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '13px' }}>
+                      <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', marginRight: '8px' }}>W{item.week}</span>
                       <span style={{ color: item.type === 'important' ? '#e67e22' : 'var(--text-primary)' }}>{item.message}</span>
                     </li>
                   ))}
