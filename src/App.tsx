@@ -14,7 +14,7 @@ import { ScoutPage } from './pages/ScoutPage';
 import { CreateUmaPage } from './pages/CreateUmaPage';
 import { EditUmaPage } from './pages/EditUmaPage';
 import { CalendarPage } from './pages/CalendarPage';
-import { DevToolsPage } from './pages/DevToolsPage'; // <--- IMPORT THIS
+import { DevToolsPage } from './pages/DevToolsPage';
 import { LeagueRosterPage } from './pages/LeagueRosterPage';
 
 function App() {
@@ -22,10 +22,10 @@ function App() {
 
   return (
     <Router>
-      <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-base)' }}>
         <Sidebar />
-        <div style={{ flexGrow: 1, padding: '40px', backgroundColor: '#f4f6f9', color: '#333' }}>
-          
+        <div style={{ flexGrow: 1, padding: '40px', backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/roster" element={<RosterPage />} />
@@ -39,7 +39,7 @@ function App() {
             <Route path="/create" element={<CreateUmaPage />} />
             <Route path="/edit/:id" element={<EditUmaPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
-            <Route path="/devtools" element={<DevToolsPage />} /> {/* <--- ADD THIS LINE */}
+            <Route path="/devtools" element={<DevToolsPage />} />
             <Route path="/league-roster" element={<LeagueRosterPage />} />
           </Routes>
 

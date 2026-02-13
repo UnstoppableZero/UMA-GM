@@ -19,7 +19,6 @@ export function CalendarPage() {
   return (
     <div style={{ padding: '20px', width: '100%', boxSizing: 'border-box' }}>
       
-      {/* 1. THE POPUP MODAL */}
       {selectedRace && (
         <RacePreview 
           race={selectedRace} 
@@ -28,9 +27,9 @@ export function CalendarPage() {
       )}
 
       {/* HEADER */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '4px solid #2c3e50', marginBottom: '20px', paddingBottom: '10px' }}>
-        <h1 style={{ margin: 0, color: '#2c3e50' }}>
-          📅 Season Schedule <span style={{fontSize:'20px', color:'#7f8c8d'}}>(Year {gameState.year})</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '4px solid var(--border-strong)', marginBottom: '20px', paddingBottom: '10px' }}>
+        <h1 style={{ margin: 0, color: 'var(--text-primary)' }}>
+          📅 Season Schedule <span style={{fontSize:'20px', color:'var(--text-secondary)'}}>  (Year {gameState.year})</span>
         </h1>
       </div>
       
@@ -47,18 +46,21 @@ export function CalendarPage() {
 
           return (
             <div key={monthName} style={{ 
-              backgroundColor: 'white', 
+              backgroundColor: 'var(--bg-surface)', 
               borderRadius: '10px', 
-              boxShadow: isCurrentMonth ? '0 0 0 3px #3498db' : '0 2px 4px rgba(0,0,0,0.1)', 
+              boxShadow: isCurrentMonth ? '0 0 0 3px #3498db' : '0 2px 4px rgba(0,0,0,0.3)', 
               overflow: 'hidden',
               display: 'flex', flexDirection: 'column',
-              height: '100%' 
+              height: '100%',
+              border: '1px solid var(--border-default)'
             }}>
               {/* MONTH HEADER */}
               <div style={{ 
-                backgroundColor: isCurrentMonth ? '#3498db' : '#2c3e50', 
-                color: 'white', padding: '12px 15px', fontWeight: 'bold', fontSize: '16px',
-                display: 'flex', justifyContent: 'space-between'
+                backgroundColor: isCurrentMonth ? '#3498db' : 'var(--bg-elevated)', 
+                color: isCurrentMonth ? 'white' : 'var(--text-primary)',
+                padding: '12px 15px', fontWeight: 'bold', fontSize: '16px',
+                display: 'flex', justifyContent: 'space-between',
+                borderBottom: '1px solid var(--border-default)'
               }}>
                 <span>{monthName}</span>
                 {isCurrentMonth && <span style={{fontSize:'10px', backgroundColor:'rgba(255,255,255,0.2)', padding:'2px 6px', borderRadius:'4px'}}>CURRENT</span>}
@@ -71,14 +73,9 @@ export function CalendarPage() {
                     {monthRaces.map(race => {
                       const isThisWeek = race.week === gameState.week;
                       const isPast = race.week < gameState.week;
-
-                      // --- FIX START: PARTIAL MATCHING FOR DIVISIONS ---
-                      // We find ALL results that start with the race name
-                      // e.g. "Yayoi Sho" matches "Yayoi Sho (Div 1)" AND "Yayoi Sho (Div 2)"
                       const results = history.filter(h => h.raceName.startsWith(race.name));
-                      const primaryResult = results[0]; // Just show the first winner (usually Div 1)
+                      const primaryResult = results[0];
                       const hasResult = results.length > 0;
-                      // --- FIX END ---
                       
                       return (
                         <div 
@@ -86,18 +83,26 @@ export function CalendarPage() {
                           onClick={() => setSelectedRace(race)}
                           style={{ 
                             padding: '10px 15px', 
-                            borderBottom: '1px solid #f0f0f0',
-                            backgroundColor: hasResult ? '#fffdf0' : (isThisWeek ? '#e3f2fd' : isPast ? '#fafafa' : 'white'), 
+                            borderBottom: '1px solid var(--border-subtle)',
+                            backgroundColor: hasResult
+                              ? 'var(--bg-elevated)'
+                              : isThisWeek
+                              ? 'rgba(52, 152, 219, 0.15)'
+                              : 'transparent',
                             borderLeft: hasResult ? '4px solid #f1c40f' : '4px solid transparent', 
-                            opacity: (isPast && !hasResult) ? 0.6 : 1, 
+                            opacity: (isPast && !hasResult) ? 0.5 : 1, 
                             display: 'flex', gap: '10px', alignItems: 'center',
                             cursor: 'pointer',
                             transition: 'background 0.2s'
                           }}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f8ff'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = hasResult ? '#fffdf0' : (isThisWeek ? '#e3f2fd' : isPast ? '#fafafa' : 'white')}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = hasResult
+                            ? 'var(--bg-elevated)'
+                            : isThisWeek
+                            ? 'rgba(52, 152, 219, 0.15)'
+                            : 'transparent'}
                         >
-                          {/* Left: Grade Badge */}
+                          {/* Grade Badge */}
                           <div style={{ minWidth: '40px', textAlign: 'center' }}>
                              <span style={{ 
                                 display: 'block', backgroundColor: getGradeColor(race.grade), 
@@ -106,29 +111,27 @@ export function CalendarPage() {
                              }}>
                                {race.grade}
                              </span>
-                             <span style={{ fontSize: '9px', color: '#95a5a6' }}>W{race.week}</span>
+                             <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>W{race.week}</span>
                           </div>
 
-                          {/* Right: Info */}
+                          {/* Info */}
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#2c3e50', lineHeight: '1.2' }}>{race.name}</div>
+                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--text-primary)', lineHeight: '1.2' }}>{race.name}</div>
                             
                             {hasResult ? (
-                              <div style={{ marginTop: '4px', fontSize: '12px', color: '#d35400', fontWeight: 'bold', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                {/* Show Primary Winner */}
+                              <div style={{ marginTop: '4px', fontSize: '12px', color: '#e67e22', fontWeight: 'bold', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                   <span>🏆</span> 
                                   <span>{primaryResult.winnerName}</span>
                                 </div>
-                                {/* Show Multi-Div Indicator */}
                                 {results.length > 1 && (
-                                  <span style={{ fontSize: '10px', color: '#7f8c8d', fontWeight: 'normal' }}>
+                                  <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 'normal' }}>
                                     + {results.length - 1} other heats
                                   </span>
                                 )}
                               </div>
                             ) : (
-                              <div style={{ fontSize: '11px', color: '#7f8c8d', marginTop: '2px' }}>
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                                 {race.location} • {race.distance}m • {race.surface}
                               </div>
                             )}
@@ -138,7 +141,7 @@ export function CalendarPage() {
                     })}
                   </div>
                 ) : (
-                  <div style={{ padding: '30px', textAlign: 'center', color: '#ddd', fontSize: '12px' }}>
+                  <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
                     No Major Events
                   </div>
                 )}

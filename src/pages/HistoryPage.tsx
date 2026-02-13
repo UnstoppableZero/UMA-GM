@@ -5,7 +5,6 @@ import { db } from '../db';
 import { FULL_CALENDAR } from '../data/calendar';
 import type { Uma } from '../types';
 
-// --- HELPER FUNCTIONS ---
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
   const seconds = (rawSeconds % 60).toFixed(2);
@@ -95,7 +94,6 @@ export function HistoryPage() {
     return { sortedByEarnings, sortedByWins };
   }, [allUmas]);
 
-  // --- DERIVATIVE STREAK LOGIC ---
   const streakRecords = useMemo<{ bestUndefeated: Uma | null, longestStreakHorse: Uma | null, maxOverallStreak: number }>(() => {
     let bestUndefeated: Uma | null = null;
     let maxUndefeatedWins = 0;
@@ -109,7 +107,6 @@ export function HistoryPage() {
       const races = history.length;
       const wins = history.filter(h => h.rank === 1).length;
 
-      // FIX: Use derived 'wins' and 'races' from history log
       if (races >= 3 && wins === races) {
         if (wins > maxUndefeatedWins) {
           maxUndefeatedWins = wins;
@@ -121,7 +118,6 @@ export function HistoryPage() {
         let currentStreak = 0;
         let horseMaxStreak = 0;
         const sortedHistory = [...history].sort((a, b) => (a.year * 100 + a.week) - (b.year * 100 + b.week));
-        
         sortedHistory.forEach(race => {
           if (race.rank === 1) {
             currentStreak++;
@@ -130,7 +126,6 @@ export function HistoryPage() {
             currentStreak = 0; 
           }
         });
-
         if (horseMaxStreak > maxOverallStreak) {
           maxOverallStreak = horseMaxStreak;
           longestStreakHorse = uma;
@@ -141,14 +136,13 @@ export function HistoryPage() {
     return { bestUndefeated, longestStreakHorse, maxOverallStreak };
   }, [allUmas]);
 
-
   if (!allHistory || !allUmas) return <div style={{padding: '20px'}}>Loading Archives...</div>;
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto', color: '#2c3e50' }}>
+    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto', color: 'var(--text-primary)' }}>
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '3px solid #34495e', paddingBottom: '10px', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0, color: '#2c3e50' }}>🏛️ League History</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '3px solid var(--border-strong)', paddingBottom: '10px', marginBottom: '20px' }}>
+        <h1 style={{ margin: 0, color: 'var(--text-primary)' }}>🏛️ League History</h1>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={() => setActiveTab('archive')} style={tabStyle(activeTab === 'archive')}>📅 Season Archive</button>
           <button onClick={() => setActiveTab('records')} style={tabStyle(activeTab === 'records')}>🏆 Record Book</button>
@@ -157,15 +151,15 @@ export function HistoryPage() {
 
       {activeTab === 'archive' && (
         <>
-          <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', backgroundColor: '#ecf0f1', padding: '15px', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', backgroundColor: 'var(--bg-elevated)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
             <div>
-              <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Season:</label>
+              <label style={{ fontWeight: 'bold', marginRight: '10px', color: 'var(--text-primary)' }}>Season:</label>
               <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))} style={selectStyle}>
                 {availableYears.map(y => <option key={y} value={y}>Year {y}</option>)}
               </select>
             </div>
             <div>
-              <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Filter:</label>
+              <label style={{ fontWeight: 'bold', marginRight: '10px', color: 'var(--text-primary)' }}>Filter:</label>
               <select value={gradeFilter} onChange={e => setGradeFilter(e.target.value)} style={selectStyle}>
                 <option value="All">All Races</option>
                 <option value="G1">G1 Only</option>
@@ -178,19 +172,19 @@ export function HistoryPage() {
           {seasonSummary && (
             <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
               <div style={summaryCardStyle}>
-                <div style={{ fontSize: '12px', color: '#7f8c8d', textTransform: 'uppercase' }}>Most Wins (Year {selectedYear})</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Most Wins (Year {selectedYear})</div>
                 <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#e67e22' }}>🐎 {seasonSummary.topHorse} ({seasonSummary.maxWins})</div>
               </div>
               <div style={summaryCardStyle}>
-                <div style={{ fontSize: '12px', color: '#7f8c8d', textTransform: 'uppercase' }}>Races Held</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Races Held</div>
                 <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#3498db' }}>🏁 {seasonSummary.totalRaces}</div>
               </div>
             </div>
           )}
 
-          <div style={{ backgroundColor: 'white', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+          <div style={{ backgroundColor: 'var(--bg-surface)', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', overflow: 'hidden', border: '1px solid var(--border-default)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead style={{ backgroundColor: '#34495e', color: 'white' }}>
+              <thead style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
                 <tr>
                   <th style={thStyle}>Wk</th>
                   <th style={thStyle}>Race Event</th>
@@ -200,20 +194,20 @@ export function HistoryPage() {
               </thead>
               <tbody>
                 {seasonRaces.length === 0 ? (
-                  <tr><td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: '#7f8c8d' }}>No races found for these filters.</td></tr>
+                  <tr><td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>No races found for these filters.</td></tr>
                 ) : (
                   seasonRaces.map((race, idx) => {
                     const details = getRaceDetails(race.raceName);
                     return (
-                      <tr key={idx} style={{ borderBottom: '1px solid #ecf0f1', backgroundColor: idx % 2 === 0 ? '#fafafa' : 'white' }}>
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: idx % 2 === 0 ? 'var(--bg-elevated)' : 'transparent' }}>
                         <td style={tdStyle}>{race.week}</td>
                         <td style={tdStyle}>
                           <div style={{ display: 'flex', alignItems: 'center' }}>
                             <GradeBadge grade={details?.grade || '-'} />
                             <div>
-                              <div style={{ fontWeight: 'bold', color: '#2c3e50' }}>{race.raceName}</div>
+                              <div style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>{race.raceName}</div>
                               {details && (
-                                <div style={{ fontSize: '12px', color: '#7f8c8d' }}>
+                                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                                   {details.location} • {details.distance}m ({details.surface})
                                 </div>
                               )}
@@ -224,19 +218,18 @@ export function HistoryPage() {
                           <div style={{ fontWeight: 'bold', color: '#2980b9', fontSize: '15px' }}>
                             🥇 {race.winnerName}
                           </div>
-                          
                           {race.top3 && race.top3.length > 1 && (
-                            <div style={{ fontSize: '12px', color: '#7f8c8d', marginTop: '6px', lineHeight: '1.4' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: '1.4' }}>
                               <div>
                                 🥈 {race.top3[1].name} 
-                                <span style={{ color: '#bdc3c7', marginLeft: '5px' }}>
+                                <span style={{ color: 'var(--text-muted)', marginLeft: '5px' }}>
                                   (+{(race.top3[1].time - race.time).toFixed(2)}s)
                                 </span>
                               </div>
                               {race.top3[2] && (
                                 <div>
                                   🥉 {race.top3[2].name} 
-                                  <span style={{ color: '#bdc3c7', marginLeft: '5px' }}>
+                                  <span style={{ color: 'var(--text-muted)', marginLeft: '5px' }}>
                                     (+{(race.top3[2].time - race.time).toFixed(2)}s)
                                   </span>
                                 </div>
@@ -260,10 +253,10 @@ export function HistoryPage() {
           
           <div style={{ display: 'flex', gap: '20px' }}>
             <div style={{ ...summaryCardStyle, borderLeft: '5px solid #e74c3c' }}>
-              <div style={{ fontSize: '12px', color: '#7f8c8d', textTransform: 'uppercase', fontWeight: 'bold' }}>👑 All-Time Win Streak</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 'bold' }}>👑 All-Time Win Streak</div>
               {streakRecords.longestStreakHorse && streakRecords.maxOverallStreak >= 3 ? (
                 <>
-                   <div style={{ fontSize: '22px', fontWeight: '900', color: '#2c3e50', marginTop: '5px' }}>
+                   <div style={{ fontSize: '22px', fontWeight: '900', color: 'var(--text-primary)', marginTop: '5px' }}>
                      {streakRecords.longestStreakHorse.firstName} {streakRecords.longestStreakHorse.lastName}
                    </div>
                    <div style={{ fontSize: '16px', color: '#e74c3c', fontWeight: 'bold' }}>
@@ -271,15 +264,15 @@ export function HistoryPage() {
                    </div>
                 </>
               ) : (
-                 <div style={{ color: '#bdc3c7', marginTop: '10px', fontStyle: 'italic' }}>No significant streaks yet.</div>
+                 <div style={{ color: 'var(--text-muted)', marginTop: '10px', fontStyle: 'italic' }}>No significant streaks yet.</div>
               )}
             </div>
 
             <div style={{ ...summaryCardStyle, borderLeft: '5px solid #2ecc71' }}>
-              <div style={{ fontSize: '12px', color: '#7f8c8d', textTransform: 'uppercase', fontWeight: 'bold' }}>🛡️ Best Undefeated Record</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 'bold' }}>🛡️ Best Undefeated Record</div>
               {streakRecords.bestUndefeated ? (
                 <>
-                   <div style={{ fontSize: '22px', fontWeight: '900', color: '#2c3e50', marginTop: '5px' }}>
+                   <div style={{ fontSize: '22px', fontWeight: '900', color: 'var(--text-primary)', marginTop: '5px' }}>
                      {streakRecords.bestUndefeated.firstName} {streakRecords.bestUndefeated.lastName}
                    </div>
                    <div style={{ fontSize: '16px', color: '#27ae60', fontWeight: 'bold' }}>
@@ -287,26 +280,26 @@ export function HistoryPage() {
                    </div>
                 </>
               ) : (
-                 <div style={{ color: '#bdc3c7', marginTop: '10px', fontStyle: 'italic' }}>No undefeated horses (Min 3 races).</div>
+                 <div style={{ color: 'var(--text-muted)', marginTop: '10px', fontStyle: 'italic' }}>No undefeated horses (Min 3 races).</div>
               )}
             </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             
-            <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
-              <h2 style={{ marginTop: 0, color: '#c0392b', borderBottom: '2px solid #ecf0f1', paddingBottom: '10px' }}>⏱️ Fastest Event Times</h2>
+            <div style={{ backgroundColor: 'var(--bg-surface)', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)' }}>
+              <h2 style={{ marginTop: 0, color: '#c0392b', borderBottom: '2px solid var(--border-default)', paddingBottom: '10px' }}>⏱️ Fastest Event Times</h2>
               <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                 {raceRecords.map((rec, idx) => {
                    const details = getRaceDetails(rec.raceName);
                    return (
-                     <li key={idx} style={{ padding: '10px 0', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                     <li key={idx} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                        <div>
-                         <div style={{ fontWeight: 'bold' }}>
+                         <div style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>
                            <GradeBadge grade={details?.grade || '-'} /> 
                            {rec.raceName.split(' (Div')[0]}
                          </div>
-                         <div style={{ fontSize: '12px', color: '#7f8c8d', marginTop: '4px' }}>
+                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
                            Held by <span style={{color: '#2980b9', fontWeight: 'bold'}}>{rec.winnerName}</span> (Year {rec.year})
                          </div>
                        </div>
@@ -321,14 +314,14 @@ export function HistoryPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               
-              <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
-                <h2 style={{ marginTop: 0, color: '#f39c12', borderBottom: '2px solid #ecf0f1', paddingBottom: '10px' }}>💰 Highest Career Earnings</h2>
+              <div style={{ backgroundColor: 'var(--bg-surface)', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)' }}>
+                <h2 style={{ marginTop: 0, color: '#f39c12', borderBottom: '2px solid var(--border-default)', paddingBottom: '10px' }}>💰 Highest Career Earnings</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <tbody>
                     {careerLeaders.sortedByEarnings.map((uma: Uma, i: number) => (
                       <tr key={uma.id}>
-                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: i === 0 ? '#f39c12' : '#7f8c8d' }}>#{i+1}</td>
-                        <td style={{ padding: '8px 0', fontWeight: 'bold' }}>{uma.firstName} {uma.lastName}</td>
+                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: i === 0 ? '#f39c12' : 'var(--text-secondary)' }}>#{i+1}</td>
+                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: 'var(--text-primary)' }}>{uma.firstName} {uma.lastName}</td>
                         <td style={{ padding: '8px 0', textAlign: 'right', color: '#27ae60' }}>${uma.career.earnings.toLocaleString()}</td>
                       </tr>
                     ))}
@@ -336,15 +329,15 @@ export function HistoryPage() {
                 </table>
               </div>
 
-              <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
-                <h2 style={{ marginTop: 0, color: '#8e44ad', borderBottom: '2px solid #ecf0f1', paddingBottom: '10px' }}>🥇 Most Career Wins</h2>
+              <div style={{ backgroundColor: 'var(--bg-surface)', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)' }}>
+                <h2 style={{ marginTop: 0, color: '#8e44ad', borderBottom: '2px solid var(--border-default)', paddingBottom: '10px' }}>🥇 Most Career Wins</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <tbody>
                     {careerLeaders.sortedByWins.map((uma: Uma, i: number) => (
                       <tr key={uma.id}>
-                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: i === 0 ? '#8e44ad' : '#7f8c8d' }}>#{i+1}</td>
-                        <td style={{ padding: '8px 0', fontWeight: 'bold' }}>{uma.firstName} {uma.lastName}</td>
-                        <td style={{ padding: '8px 0', textAlign: 'right' }}>{uma.history.filter(h => h.rank === 1).length} Wins</td>
+                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: i === 0 ? '#8e44ad' : 'var(--text-secondary)' }}>#{i+1}</td>
+                        <td style={{ padding: '8px 0', fontWeight: 'bold', color: 'var(--text-primary)' }}>{uma.firstName} {uma.lastName}</td>
+                        <td style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-primary)' }}>{uma.history.filter(h => h.rank === 1).length} Wins</td>
                       </tr>
                     ))}
                   </tbody>
@@ -359,16 +352,15 @@ export function HistoryPage() {
   );
 }
 
-// --- STYLING OBJECTS ---
 const tabStyle = (active: boolean) => ({
   padding: '10px 20px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
-  backgroundColor: active ? '#2c3e50' : '#ecf0f1',
-  color: active ? 'white' : '#7f8c8d',
-  border: 'none', borderRadius: '5px 5px 0 0',
-  borderBottom: active ? 'none' : '1px solid #bdc3c7'
+  backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+  border: '1px solid var(--border-default)', borderRadius: '5px 5px 0 0',
+  borderBottom: active ? 'none' : '1px solid var(--border-default)'
 });
 
-const selectStyle = { padding: '8px', borderRadius: '4px', border: '1px solid #bdc3c7', fontSize: '14px', minWidth: '120px' };
-const summaryCardStyle = { flex: 1, backgroundColor: 'white', padding: '15px', borderRadius: '8px', borderLeft: '5px solid #bdc3c7', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' };
-const thStyle = { padding: '12px 15px', borderBottom: '2px solid #bdc3c7' };
-const tdStyle = { padding: '12px 15px', verticalAlign: 'middle' };
+const selectStyle = { padding: '8px', borderRadius: '4px', border: '1px solid var(--border-default)', fontSize: '14px', minWidth: '120px', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' };
+const summaryCardStyle = { flex: 1, backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', borderLeft: '5px solid var(--border-strong)', boxShadow: '0 2px 5px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)' };
+const thStyle = { padding: '12px 15px', borderBottom: '2px solid var(--border-default)', color: 'var(--text-secondary)' };
+const tdStyle = { padding: '12px 15px', verticalAlign: 'middle' as const, color: 'var(--text-primary)' };

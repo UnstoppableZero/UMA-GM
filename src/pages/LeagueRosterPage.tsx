@@ -10,13 +10,11 @@ export function LeagueRosterPage() {
   const roster = useLiveQuery(() => db.umas.toArray());
   const teams = useLiveQuery(() => db.teams.toArray());
   
-  // --- STATE ---
   const [searchTerm, setSearchTerm] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
   const [sortKey, setSortKey] = useState<string>('ovr');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // --- POTENTIAL LOGIC ---
   const calculatePotential = (uma: Uma) => {
     const stats = [uma.stats.speed, uma.stats.stamina, uma.stats.power, uma.stats.guts, uma.stats.wisdom];
     const maxPossible = 1200 * 5;
@@ -24,7 +22,6 @@ export function LeagueRosterPage() {
     return Math.floor(((maxPossible - currentTotal) / maxPossible) * 100);
   };
 
-  // --- LEAGUE LEADERS LOGIC ---
   const leaders = useMemo(() => {
     if (!roster || roster.length === 0) return null;
     const topOvr = [...roster].sort((a, b) => calculateOVR(b) - calculateOVR(a))[0];
@@ -32,7 +29,6 @@ export function LeagueRosterPage() {
     return { topOvr, topWins };
   }, [roster]);
 
-  // --- SORTING & FILTERING LOGIC ---
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('desc'); }
@@ -40,13 +36,11 @@ export function LeagueRosterPage() {
 
   const filteredRoster = useMemo(() => {
     if (!roster) return [];
-    
     let filtered = roster.filter(u => {
       const matchesSearch = (u.firstName + ' ' + u.lastName).toLowerCase().includes(searchTerm.toLowerCase());
       const matchesTeam = teamFilter === 'all' || u.teamId === teamFilter;
       return matchesSearch && matchesTeam;
     });
-
     return filtered.sort((a, b) => {
       let valA: any, valB: any;
       switch (sortKey) {
@@ -90,7 +84,7 @@ export function LeagueRosterPage() {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0, color: '#2c3e50' }}>🌎 League Roster</h1>
+        <h1 style={{ margin: 0, color: 'var(--text-primary)' }}>🌎 League Roster</h1>
         <div style={{ display: 'flex', gap: '10px' }}>
           <input 
             type="text" 
@@ -107,8 +101,8 @@ export function LeagueRosterPage() {
         </div>
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <thead style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #eee' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--bg-surface)', boxShadow: '0 1px 3px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)' }}>
+        <thead style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '2px solid var(--border-default)' }}>
           <tr>
             <th onClick={() => handleSort('name')} style={thStyle}>Name & Team</th>
             <th onClick={() => handleSort('ovr')} style={{...thStyle, textAlign: 'center'}}>OVR</th>
@@ -124,16 +118,18 @@ export function LeagueRosterPage() {
             const wins = uma.career?.wins || 0;
             const races = uma.career?.races || 0;
             const losses = races - wins;
-
             return (
-              <tr key={uma.id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={uma.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                onMouseOver={e => (e.currentTarget.style.backgroundColor = 'var(--bg-elevated)')}
+                onMouseOut={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
                 <td style={{ padding: '12px' }}>
-                  <Link to={`/uma/${uma.id}`} style={{ textDecoration: 'none', color: '#2c3e50', fontWeight: 'bold' }}>
+                  <Link to={`/uma/${uma.id}`} style={{ textDecoration: 'none', color: 'var(--text-primary)', fontWeight: 'bold' }}>
                       <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
                           {getTeamBadge(uma.teamId)}
                           <div>
                               {uma.firstName} {uma.lastName}
-                              <div style={{fontSize: '11px', color: '#95a5a6', fontWeight: 'normal'}}>
+                              <div style={{fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'normal'}}>
                                   {uma.teamId === 'player' ? 'Player Stable' : `Team ${uma.teamId}`}
                               </div>
                           </div>
@@ -148,7 +144,7 @@ export function LeagueRosterPage() {
                       {calculatePotential(uma)}%
                   </span>
                 </td>
-                <td style={{ textAlign: 'center', fontWeight: 'bold', color: '#34495e' }}>
+                <td style={{ textAlign: 'center', fontWeight: 'bold', color: 'var(--text-primary)' }}>
                   {wins}-{losses}
                 </td>
                 <td style={{ textAlign: 'center' }}>{renderGrade(uma.stats.speed)}</td>
@@ -163,16 +159,15 @@ export function LeagueRosterPage() {
   );
 }
 
-// --- SHARED VISUAL HELPERS ---
-const thStyle = { padding: '12px', textAlign: 'left' as const, fontSize: '12px', textTransform: 'uppercase' as const, cursor: 'pointer' };
-const inputStyle = { padding: '8px', borderRadius: '4px', border: '1px solid #ddd' };
+const thStyle = { padding: '12px', textAlign: 'left' as const, fontSize: '12px', textTransform: 'uppercase' as const, cursor: 'pointer', color: 'var(--text-secondary)' };
+const inputStyle = { padding: '8px', borderRadius: '4px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' };
 
 const leaderCardStyle = (color: string) => ({
-    flex: 1, backgroundColor: 'white', padding: '15px', borderRadius: '8px', borderLeft: `5px solid ${color}`, boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+    flex: 1, backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', borderLeft: `5px solid ${color}`, boxShadow: '0 2px 4px rgba(0,0,0,0.3)', border: '1px solid var(--border-default)'
 });
-const leaderLabel = { fontSize: '11px', fontWeight: 'bold', color: '#7f8c8d', marginBottom: '5px' };
-const leaderName = { fontSize: '18px', fontWeight: 'bold', color: '#2c3e50' };
-const leaderStat = { fontSize: '13px', color: '#95a5a6', marginTop: '2px' };
+const leaderLabel = { fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)' as const, marginBottom: '5px' };
+const leaderName = { fontSize: '18px', fontWeight: 'bold', color: 'var(--text-primary)' as const };
+const leaderStat = { fontSize: '13px', color: 'var(--text-muted)' as const, marginTop: '2px' };
 
 function getTeamBadge(team?: string) {
   if (!team || team === 'player') return '🏠';
@@ -181,7 +176,7 @@ function getTeamBadge(team?: string) {
 }
 
 function renderGrade(val: number) {
-  let grade = 'G'; let color = '#bdc3c7';
+  let grade = 'G'; let color = 'var(--text-muted)';
   if (val >= 1000) { grade = 'S'; color = '#f1c40f'; }
   else if (val >= 800) { grade = 'A'; color = '#e67e22'; }
   else if (val >= 600) { grade = 'B'; color = '#3498db'; }

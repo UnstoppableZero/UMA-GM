@@ -84,10 +84,9 @@ export function DashboardPage() {
     setShowOdds(false);
     
     const trainingUpdates = roster.map(uma => {
-      // 1. INJURY RECOVERY
       if (uma.injuryWeeks > 0) {
         uma.injuryWeeks -= 1;
-        uma.energy = 100; // Injuries force full rest
+        uma.energy = 100;
         uma.fatigue = 0;
         return { uma, changes: ["Recovering..."] };
       }
@@ -95,25 +94,17 @@ export function DashboardPage() {
       const isRacing = currentQualifiedField.some(q => q.id === uma.id);
       
       if (isRacing) {
-        // === SAFETY VALVE: SCRATCH IF FATIGUED ===
-        // If a horse is qualified but too tired (>60), force them to skip this race.
-        // This prevents the "Death Loop" of 100% fatigue during G1 season.
         if ((uma.fatigue || 0) > 60) {
             uma.energy = 100;
             uma.fatigue = 0;
             return { uma, changes: ["Scratched (Fatigue)"] };
         }
-
-        // === RACING LOGIC (BUFFERED) ===
-        // Racing now costs significantly less fatigue to survive the G1 gauntlet
-        uma.energy = Math.max(0, (uma.energy || 100) - 20); // Was 30
-        uma.fatigue = Math.min(100, (uma.fatigue || 0) + 5); // Was 15 -> Now +5
+        uma.energy = Math.max(0, (uma.energy || 100) - 20);
+        uma.fatigue = Math.min(100, (uma.fatigue || 0) + 5);
         
-        // Lower injury risks significantly
         const riskRoll = Math.random() * 100;
-        // Only risky if fatigue is critically high (>85)
         const fatiguePenalty = uma.fatigue > 85 ? 5 : 0; 
-        const threshold = 0.5 + fatiguePenalty; // Base risk 0.5%
+        const threshold = 0.5 + fatiguePenalty;
 
         if (riskRoll < threshold) {
            uma.injuryWeeks = Math.floor(Math.random() * 3) + 2;
@@ -126,17 +117,13 @@ export function DashboardPage() {
         return { uma, changes: [] };
 
       } else {
-        // === RESTING OR TRAINING ===
-        // If they are even slightly tired, let them fully recover.
-        // Threshold changed from 70 -> 50. Recovery changed from -25 -> Full Reset.
         if ((uma.fatigue || 0) > 50 || (uma.energy || 0) < 50) {
-           uma.energy = 100; // Fully Restore Energy
-           uma.fatigue = 0;  // Fully Clear Fatigue
+           uma.energy = 100;
+           uma.fatigue = 0;
            return { uma, changes: ["Full Rest"] };
         } else {
-           // Training cost reduced
            uma.energy = Math.max(0, (uma.energy || 100) - 10);
-           uma.fatigue = Math.min(100, (uma.fatigue || 0) + 2); // Was +5 -> Now +2
+           uma.fatigue = Math.min(100, (uma.fatigue || 0) + 2);
            
            let aiFocus: 'speed' | 'stamina' | 'balanced' = 'balanced';
            if (uma.stats.speed < 600) aiFocus = 'speed';
@@ -149,14 +136,12 @@ export function DashboardPage() {
     let currentMoney = gameState.money; 
 
     if (currentEvent) {
-      // FIX: Filter the wrapper 't' FIRST, then map to 't.uma'
       const allActiveHorses = trainingUpdates
         .filter(t => t.uma.injuryWeeks === 0 && !t.changes.includes("Scratched (Fatigue)"))
         .map(t => t.uma);
         
       const qualified = getQualifiedEntrants(allActiveHorses, currentEvent);
       
-      // Sort: Best Ratings First
       qualified.sort((a, b) => {
           const statsA = a.stats.speed + a.stats.stamina + a.stats.power + a.stats.guts + a.stats.wisdom;
           const statsB = b.stats.speed + b.stats.stamina + b.stats.power + b.stats.guts + b.stats.wisdom;
@@ -285,9 +270,9 @@ export function DashboardPage() {
             {raceQueue.length > 1 && (
                 <div style={{ 
                     position: 'fixed', top: '10px', left: '20px', zIndex: 4000, 
-                    color: 'white', backgroundColor: 'rgba(0,0,0,0.7)', 
+                    color: 'var(--text-primary)', backgroundColor: 'rgba(0,0,0,0.7)', 
                     padding: '8px 16px', borderRadius: '4px', fontSize: '14px', 
-                    fontWeight: 'bold', border: '1px solid #555' 
+                    fontWeight: 'bold', border: '1px solid var(--border-strong)' 
                 }}>
                     📡 Broadcast {currentQueueIndex + 1} of {raceQueue.length}
                 </div>
@@ -302,32 +287,32 @@ export function DashboardPage() {
       ) : (
         <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', marginBottom: '20px' }}>
            <div style={{ flex: 1 }}>
-              <h1 style={{ color: '#2c3e50', margin: '0 0 10px 0' }}>Year {gameState.year} - Week {gameState.week}</h1>
-              <div style={{ padding: '20px', backgroundColor: '#e3f2fd', borderLeft: '5px solid #2196f3', borderRadius: '8px', color: '#0d47a1' }}>
+              <h1 style={{ color: 'var(--text-primary)', margin: '0 0 10px 0' }}>Year {gameState.year} - Week {gameState.week}</h1>
+              <div style={{ padding: '20px', backgroundColor: 'var(--bg-surface)', borderLeft: '5px solid #2196f3', borderRadius: '8px', color: 'var(--text-primary)' }}>
                 {currentEvent ? (
                   <div>
-                    <div style={{fontSize: '12px', fontWeight:'bold', color: '#7f8c8d'}}>NEXT MAIN EVENT</div>
-                    <h2 style={{ marginTop: '5px', marginBottom: '5px', fontSize: '24px' }}>
+                    <div style={{fontSize: '12px', fontWeight:'bold', color: 'var(--text-secondary)'}}>NEXT MAIN EVENT</div>
+                    <h2 style={{ marginTop: '5px', marginBottom: '5px', fontSize: '24px', color: 'var(--text-primary)' }}>
                       <span style={{ backgroundColor: currentEvent.grade === 'G1' ? '#3498db' : '#95a5a6', color: 'white', padding: '2px 8px', borderRadius: '4px', marginRight: '10px', fontSize: '16px', verticalAlign: 'middle' }}>{currentEvent.grade}</span>
                       {currentEvent.name}
                     </h2>
-                    <div style={{marginBottom: '10px'}}>📍 {currentEvent.location} • {currentEvent.distance}m</div>
+                    <div style={{marginBottom: '10px', color: 'var(--text-secondary)'}}>📍 {currentEvent.location} • {currentEvent.distance}m</div>
                     <button onClick={() => setShowOdds(!showOdds)} style={{ padding: '6px 12px', fontSize: '12px', backgroundColor: '#9b59b6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginBottom: '10px' }}>
                       {showOdds ? '🙈 Hide Odds' : '🎲 View Field Odds'}
                     </button>
                     {showOdds && (
-                      <div style={{ backgroundColor: 'rgba(255,255,255,0.6)', padding: '10px', borderRadius: '8px', marginTop: '5px', maxHeight: '180px', overflowY: 'auto', border: '1px solid #bbdefb' }}>
+                      <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '10px', borderRadius: '8px', marginTop: '5px', maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border-default)' }}>
                         {currentQualifiedField.length > 0 ? currentQualifiedField.slice(0, 12).map(uma => (
-                          <div key={uma.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid rgba(0,0,0,0.05)', padding: '4px 0' }}>
-                            <span>{uma.firstName} {uma.lastName} {uma.fatigue > 60 ? '💢' : ''}</span>
-                            <span style={{ fontWeight: 'bold', color: (uma.energy || 100) < 40 ? '#e67e22' : '#2c3e50' }}>{calculateOdds(uma, currentQualifiedField)}</span>
+                          <div key={uma.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderBottom: '1px solid var(--border-subtle)', padding: '4px 0' }}>
+                            <span style={{ color: 'var(--text-primary)' }}>{uma.firstName} {uma.lastName} {uma.fatigue > 60 ? '💢' : ''}</span>
+                            <span style={{ fontWeight: 'bold', color: (uma.energy || 100) < 40 ? '#e67e22' : 'var(--text-primary)' }}>{calculateOdds(uma, currentQualifiedField)}</span>
                           </div>
-                        )) : <div>No qualified entrants.</div>}
+                        )) : <div style={{ color: 'var(--text-secondary)' }}>No qualified entrants.</div>}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div><h3 style={{ marginTop: 0 }}>💪 Training Week</h3><p>No major races scheduled.</p></div>
+                  <div><h3 style={{ marginTop: 0, color: 'var(--text-primary)' }}>💪 Training Week</h3><p style={{ color: 'var(--text-secondary)' }}>No major races scheduled.</p></div>
                 )}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                   <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>▶ Play Week</button>
@@ -339,18 +324,20 @@ export function DashboardPage() {
                 </div>
               </div>
            </div>
-           <div style={{ flex: 1, backgroundColor: 'white', padding: '15px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', height: '240px', overflowY: 'auto' }}>
-              <h3 style={{ marginTop: 0, borderBottom: '2px solid #eee', paddingBottom: '10px', color: '#555' }}>📰 League News</h3>
+
+           {/* LEAGUE NEWS PANEL */}
+           <div style={{ flex: 1, backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.3)', height: '240px', overflowY: 'auto', border: '1px solid var(--border-default)' }}>
+              <h3 style={{ marginTop: 0, borderBottom: '2px solid var(--border-default)', paddingBottom: '10px', color: 'var(--text-secondary)' }}>📰 League News</h3>
               {latestNews && latestNews.length > 0 ? (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                   {latestNews.map(item => (
-                    <li key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0', fontSize: '14px' }}>
-                      <span style={{ fontWeight: 'bold', color: '#999', marginRight: '10px' }}>Y{item.year}-W{item.week}</span>
-                      <span style={{ color: item.type === 'important' ? '#e67e22' : '#2c3e50' }}>{item.message}</span>
+                    <li key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: '14px' }}>
+                      <span style={{ fontWeight: 'bold', color: 'var(--text-muted)', marginRight: '10px' }}>Y{item.year}-W{item.week}</span>
+                      <span style={{ color: item.type === 'important' ? '#e67e22' : 'var(--text-primary)' }}>{item.message}</span>
                     </li>
                   ))}
                 </ul>
-              ) : <p style={{ color: '#ccc' }}>Waiting for history...</p>}
+              ) : <p style={{ color: 'var(--text-muted)' }}>Waiting for history...</p>}
            </div>
         </div>
       )}

@@ -33,28 +33,15 @@ function randomInt(min: number, max: number) {
 // MAIN GENERATOR
 // -------------------------------------------------------------
 export function generateUma(parent?: Uma): Uma {
-  // 1. DETERMINE TIER (Re-balanced for the 99 OVR Benchmark)
+  // 1. DETERMINE TIER
   const roll = Math.random();
   let baseStatMin = 300; 
   let baseStatMax = 420; 
   
-  if (roll > 0.98) { 
-    // S-Rank: 2% chance. Generational Prospects (Starts ~78-82 OVR)
-    baseStatMin = 550; 
-    baseStatMax = 650;
-  } else if (roll > 0.85) { 
-    // A-Rank: 13% chance. Graded Contenders (Starts ~70-75 OVR)
-    baseStatMin = 480;
-    baseStatMax = 580;
-  } else if (roll > 0.40) { 
-    // B-Rank: 45% chance. The Solid Middle Class (Starts ~60-68 OVR)
-    baseStatMin = 400;
-    baseStatMax = 520;
-  } else {
-    // C-Rank: 40% chance. Developmental Depth (Starts < 60 OVR)
-    baseStatMin = 300;
-    baseStatMax = 420;
-  }
+  if (roll > 0.98) { baseStatMin = 550; baseStatMax = 650; } 
+  else if (roll > 0.85) { baseStatMin = 480; baseStatMax = 580; } 
+  else if (roll > 0.40) { baseStatMin = 400; baseStatMax = 520; } 
+  else { baseStatMin = 300; baseStatMax = 420; }
 
   // 2. GENERATE BASE STATS
   const speed = randomInt(baseStatMin, baseStatMax);
@@ -63,24 +50,63 @@ export function generateUma(parent?: Uma): Uma {
   const guts = randomInt(baseStatMin, baseStatMax);
   const wisdom = randomInt(baseStatMin, baseStatMax);
   
-  // 3. INHERITANCE LOGIC (Capped to prevent power creep)
+  // 3. INHERITANCE LOGIC
   let bonusSpeed = 0;
   let bonusStamina = 0;
   let bonusPower = 0;
   let inheritedTrophies: string[] = [];
 
   if (parent) {
-    // Cap bonus at +50 per stat to ensure children don't start at their parent's peak
     bonusSpeed = Math.min(Math.floor(parent.stats.speed * 0.1), 50);
     bonusStamina = Math.min(Math.floor(parent.stats.stamina * 0.1), 50);
     bonusPower = Math.min(Math.floor(parent.stats.power * 0.1), 50);
     inheritedTrophies.push(`Daughter of ${parent.lastName}`);
   }
 
-  // 4. GENERATE APTITUDE
-  const isDirtSpecialist = Math.random() > 0.8; 
+  // 4. GENERATE APTITUDE (FIXED RANDOMIZATION)
+  const isDirtSpecialist = Math.random() > 0.85; 
   const isSprinter = Math.random() > 0.7; 
   const isStayer = Math.random() > 0.8; 
+
+  // --- NEW STRATEGY LOGIC ---
+  // Pick a "Preferred Strategy" so they are good at one thing, 
+  // rather than mediocre at everything.
+  const styleRoll = Math.random();
+  let strat = { runner: 1, leader: 1, betweener: 1, chaser: 1 };
+
+  if (styleRoll < 0.20) {
+      // RUNNER (Great Start, fades late)
+      strat = {
+          runner: randomInt(8, 10), // A or S
+          leader: randomInt(4, 7),  // C or B
+          betweener: randomInt(1, 4), 
+          chaser: randomInt(1, 2)
+      };
+  } else if (styleRoll < 0.50) {
+      // LEADER (Good positioning)
+      strat = {
+          runner: randomInt(4, 6),
+          leader: randomInt(8, 10), // A or S
+          betweener: randomInt(5, 7),
+          chaser: randomInt(1, 3)
+      };
+  } else if (styleRoll < 0.80) {
+      // BETWEENER (Mid-pack strike)
+      strat = {
+          runner: randomInt(1, 3),
+          leader: randomInt(5, 7),
+          betweener: randomInt(8, 10), // A or S
+          chaser: randomInt(4, 6)
+      };
+  } else {
+      // CHASER (Last to First)
+      strat = {
+          runner: randomInt(1, 2),
+          leader: randomInt(2, 4),
+          betweener: randomInt(5, 7),
+          chaser: randomInt(8, 10) // A or S
+      };
+  }
 
   const aptitude = {
        surface: { 
@@ -93,9 +119,7 @@ export function generateUma(parent?: Uma): Uma {
          medium: 7, 
          long: isStayer ? 8 : 3 
        },
-       strategy: { 
-         runner: 5, leader: 7, betweener: 5, chaser: 3 
-       }
+       strategy: strat // Use the randomized object
   };
 
   // 5. GENERATE INNATE SKILLS
@@ -115,7 +139,6 @@ export function generateUma(parent?: Uma): Uma {
       availableSkills.splice(randIdx, 1);
   }
 
-  // 6. GENERATE NAME
   const fName = FIRST_NAMES[randomInt(0, FIRST_NAMES.length - 1)];
   const lName = LAST_NAMES[randomInt(0, LAST_NAMES.length - 1)];
 
@@ -131,6 +154,12 @@ export function generateUma(parent?: Uma): Uma {
     status: 'active',
     skills: innateSkills,
     trophies: inheritedTrophies,
+    
+    // PROPERTIES
+    energy: 100,      
+    fatigue: 0,       
+    injuryWeeks: 0,   
+
     career: { races: 0, wins: 0, top3: 0, earnings: 0 },
     history: [],
     stats: {

@@ -1,5 +1,6 @@
 // src/race.ts
 import type { Uma } from './types';
+import type { SkillType } from './skills'; // Import the type for safety
 import { getCommentary } from './commentary'; 
 
 export interface LogEntry {
@@ -19,75 +20,77 @@ export interface RaceOutcome {
   results: RaceResult[];
   log: LogEntry[];
   raceDistance?: number; 
-  surface?: 'Turf' | 'Dirt'; // <-- Reverted to Capitalized for the UI!
+  surface?: 'Turf' | 'Dirt'; 
 }
 
-// HELPER: Convert number distance to string category for skill checking
-const getDistanceCategory = (dist: number): 'short' | 'mile' | 'medium' | 'long' => {
-    if (dist <= 1400) return 'short';
-    if (dist <= 1800) return 'mile';
-    if (dist <= 2400) return 'medium';
-    return 'long';
+// HELPER: Convert number distance to Capitalized category
+const getDistanceCategory = (dist: number): 'Short' | 'Mile' | 'Medium' | 'Long' => {
+    if (dist <= 1400) return 'Short';
+    if (dist <= 1800) return 'Mile';
+    if (dist <= 2400) return 'Medium';
+    return 'Long';
 };
 
-// HELPER: Find the horse's best strategy based on their aptitudes
-const getBestStrategy = (strats: Record<string, number>): 'runner' | 'leader' | 'betweener' | 'chaser' => {
-    let best = 'runner';
+// HELPER: Find the horse's best strategy (Capitalized return)
+const getBestStrategy = (strats: Record<string, number>): 'Runner' | 'Leader' | 'Betweener' | 'Chaser' => {
+    let best = 'Runner';
     let max = 0;
+    
+    // Normalize keys to ensure we map 'runner' -> 'Runner' if needed
+    const map = { runner: 'Runner', leader: 'Leader', betweener: 'Betweener', chaser: 'Chaser' };
+
     for (const [key, val] of Object.entries(strats)) {
-        if (val > max) { max = val; best = key; }
+        if (val > max) { 
+            max = val; 
+            // @ts-ignore
+            best = map[key.toLowerCase()] || 'Runner'; 
+        }
     }
-    return best as 'runner' | 'leader' | 'betweener' | 'chaser';
+    return best as 'Runner' | 'Leader' | 'Betweener' | 'Chaser';
 };
 
-// <-- Reverted the surface parameter to Capitalized to fix DevTools
 export function simulateRace(runners: Uma[], distance: number = 2000, surface: 'Turf' | 'Dirt' = 'Turf'): RaceOutcome {
   const log: LogEntry[] = [];
   const distCategory = getDistanceCategory(distance);
   
-  // Convert the capitalized UI surface to lowercase strictly for the skill database check
-  const normalizedSurface = surface.toLowerCase() as 'turf' | 'dirt';
-  
   // 1. START
-  log.push({ message: getCommentary('start'), timePct: 0.02 });
+  log.push({ message: "And they're off!", timePct: 0.02 });
 
   // Late Starts (Wisdom Check)
   runners.forEach(uma => {
-    if (Math.random() > (uma.stats.wisdom / 1000) + 0.5) { 
+    if (Math.random() > (uma.stats.wisdom / 1000) + 0.85) { 
       log.push({ 
-        message: getCommentary('badStart', { name: uma.lastName }), 
+        message: `${uma.lastName} missed the break!`, 
         timePct: 0.05, 
         type: 'bad' 
       });
     }
   });
 
-  // 2. CALCULATE REALISTIC TIMES
+  // 2. CALCULATE RESULTS
   const calculatedResults = runners.map(uma => {
     // A. BASE SPEED 
     let metersPerSecond = 16.0; 
-
-    // B. SPEED BONUS 
     metersPerSecond += (uma.stats.speed / 1200) * 2.5;
 
-    // C. STAMINA PENALTY
+    // B. STAMINA PENALTY
     const requiredStamina = distance / 3.5;
     if (uma.stats.stamina < requiredStamina) {
        const fatigue = (requiredStamina - uma.stats.stamina) / 100; 
        metersPerSecond -= Math.min(fatigue, 3.0); 
     }
 
-    // D. POWER BONUS
+    // C. POWER BONUS
     metersPerSecond += (uma.stats.power / 1200) * 0.5;
 
-    // E. VARIANCE 
+    // D. VARIANCE 
     const variance = (Math.random() * 0.6) - 0.3;
     metersPerSecond += variance;
 
-    // F. CALCULATE RAW TIME
+    // E. CALCULATE RAW TIME
     let time = distance / metersPerSecond; 
 
-    // G. SKILL EVALUATION (NEW LOGIC)
+    // F. SKILL EVALUATION (FIXED COMPARISONS)
     const activations: { skillName: string; timeOffset: number }[] = [];
     const bestStrat = getBestStrategy(uma.aptitude?.strategy || { runner: 5, leader: 5, betweener: 5, chaser: 5 });
 
@@ -95,60 +98,47 @@ export function simulateRace(runners: Uma[], distance: number = 2000, surface: '
       uma.skills.forEach(skill => {
         let canTrigger = true;
 
-        // 1. Check strict conditions!
+        // 1. Check strict conditions (Now checking against Capitalized types)
         if (skill.conditions) {
-            // <-- We now use the lowercase normalizedSurface for this check
-            if (skill.conditions.surface && skill.conditions.surface !== normalizedSurface) canTrigger = false;
+            if (skill.conditions.surface && skill.conditions.surface !== surface) canTrigger = false;
             if (skill.conditions.distance && skill.conditions.distance !== distCategory) canTrigger = false;
             if (skill.conditions.strategy && skill.conditions.strategy !== bestStrat) canTrigger = false;
         }
 
-        // 2. If allowed to trigger, roll the dice (Wisdom gives a slight buff to trigger chance)
+        // 2. Roll for activation
         const wisdomBonus = uma.stats.wisdom / 2000; 
         if (canTrigger && Math.random() < (skill.triggerChance + wisdomBonus)) {
-          // Effect logic: Time saved
-          const timeSaved = skill.effectValue * 1.5; 
+          // Effect: Time saved
+          const timeSaved = skill.effectValue * 0.5; // Tuned down slightly
           time -= timeSaved;
           
-          let timing = time * 0.5; 
-          if (skill.type === 'start') timing = 1.0; 
-          if (skill.type === 'speed') timing = time * 0.85; 
-          
-          activations.push({ skillName: skill.name, timeOffset: timing });
+          activations.push({ skillName: skill.name, timeOffset: timeSaved });
         }
       });
     }
     
-    const score = metersPerSecond; 
-    return { uma, time, score, skillActivations: activations };
+    return { uma, time, skillActivations: activations };
   });
 
   // Sort by Time (Lowest is best)
   calculatedResults.sort((a, b) => a.time - b.time);
   
-  // 3. GENERATE COMMENTARY
-  const leader = calculatedResults[0].uma;
-  const chaser = calculatedResults[Math.floor(Math.random() * (runners.length - 1)) + 1].uma;
-
-  log.push({ message: getCommentary('leader', { name: leader.lastName }), timePct: 0.25 });
-  log.push({ message: getCommentary('midRace'), timePct: 0.50 });
-  log.push({ message: getCommentary('chaser', { name: chaser.lastName }), timePct: 0.75 });
-  
+  // 3. GENERATE LOGS
   const winner = calculatedResults[0];
   const second = calculatedResults[1];
   const timeDiff = second ? (second.time - winner.time) : 10;
 
-  log.push({ message: getCommentary('finalStraight'), timePct: 0.88, type: 'good' });
+  log.push({ message: `${winner.uma.lastName} takes the lead in the final stretch!`, timePct: 0.85, type: 'good' });
 
   if (timeDiff < 0.1) {
-    log.push({ message: getCommentary('neckAndNeck', { winner: winner.uma.lastName, second: second.uma.lastName }), timePct: 0.96, type: 'final' });
-    log.push({ message: `📸 PHOTO FINISH! ${winner.uma.lastName} wins!`, timePct: 1.0, type: 'final' });
+    log.push({ message: `It's neck and neck between ${winner.uma.lastName} and ${second.uma.lastName}!`, timePct: 0.96, type: 'final' });
+    log.push({ message: `📸 PHOTO FINISH! ${winner.uma.lastName} wins by a nose!`, timePct: 1.0, type: 'final' });
   } else if (timeDiff < 0.5) {
-    log.push({ message: getCommentary('holdOff', { winner: winner.uma.lastName, second: second.uma.lastName }), timePct: 0.95 });
-    log.push({ message: getCommentary('winnerAnnouncement', { winner: winner.uma.lastName }), timePct: 1.0, type: 'final' });
+    log.push({ message: `${winner.uma.lastName} holds off the charge!`, timePct: 0.95 });
+    log.push({ message: `🏆 ${winner.uma.lastName} crosses the line first!`, timePct: 1.0, type: 'final' });
   } else {
-    log.push({ message: getCommentary('easyWin', { winner: winner.uma.lastName }), timePct: 0.95 });
-    log.push({ message: getCommentary('winnerAnnouncement', { winner: winner.uma.lastName }), timePct: 1.0, type: 'final' });
+    log.push({ message: `${winner.uma.lastName} is running away with it!`, timePct: 0.95 });
+    log.push({ message: `🏆 An easy victory for ${winner.uma.lastName}!`, timePct: 1.0, type: 'final' });
   }
 
   const finalResults: RaceResult[] = calculatedResults.map((res, idx) => ({
