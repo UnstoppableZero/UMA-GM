@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { RaceOutcome } from '../race';
 import { TRACKS } from '../tracks';
 import type { Location } from '../schedule';
+import type { Uma } from '../types';
 
 interface Props {
   outcome: RaceOutcome;
@@ -12,15 +13,31 @@ interface Props {
   surface?: 'Turf' | 'Dirt';
 }
 
+const getVisualStrategy = (uma: Uma) => {
+    const s = uma.stats;
+    if (s.stamina > 600 && s.power > 600) return 'betweener';
+    if (s.speed > 800) return 'runner';
+    if (s.power > 800) return 'chaser';
+    return 'leader';
+};
+
+const getVisualProgress = (pct: number, strategy: string) => {
+    if (pct >= 1) return 1;
+    if (pct <= 0) return 0;
+    if (strategy === 'runner') return Math.pow(pct, 0.85);
+    if (strategy === 'chaser') return Math.pow(pct, 1.25);
+    if (strategy === 'betweener') return Math.pow(pct, 1.1);
+    return pct;
+};
+
 export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, surface }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // CONFIG
   const trackConfig = TRACKS[location] || TRACKS['Tokyo'];
+  // UPDATED: Now utilizes the passed distance prop correctly
   const raceDistance = distance || (outcome as any).raceDistance || 2000;
   const raceSurface = surface || 'Turf';
 
-  // STATE
   const [finished, setFinished] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [speed, setSpeed] = useState(1); 
@@ -29,8 +46,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
   
   const [showResults, setShowResults] = useState(false);
   const [currentCommentary, setCurrentCommentary] = useState("");
+  const [skillCutIn, setSkillCutIn] = useState<{name: string, text: string} | null>(null);
 
-  // 1. Load Image
   const trackImage = useRef<HTMLImageElement | null>(null);
   useEffect(() => {
     setImageLoaded(false); 
@@ -43,36 +60,45 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
   }, [trackConfig]);
 
   const runnerColors = useRef(outcome.results.map(() => 
-    `hsl(${Math.floor(Math.random() * 360)}, 80%, 50%)`
+    `hsl(${Math.floor(Math.random() * 360)}, 85%, 60%)`
   )).current;
 
-  // 3. BUILD THE CUSTOM RACE PATH
+  // UPDATED: Corrected buildRacePath to properly merge chutes and laps
   const buildRacePath = () => {
-    const mainLoop = raceSurface === 'Dirt' && trackConfig.dirtLoop?.length > 0 
-                    ? trackConfig.dirtLoop 
-                    : (trackConfig.turfLoop?.length > 0 ? trackConfig.turfLoop : []);
+    const mainLoop = raceSurface === 'Dirt' 
+                    ? (trackConfig.dirtLoop || []) 
+                    : (trackConfig.turfLoop || []);
     
     if (mainLoop.length === 0) return [];
 
     const startsData = raceSurface === 'Dirt' ? trackConfig.starts?.dirt : trackConfig.starts?.turf;
     const startConf = startsData?.[raceDistance];
-    const finishIdx = trackConfig.finishLineIndex || 0;
+    const finishIdx = trackConfig.finishLineIndex;
 
     let path: {x:number, y:number}[] = [];
 
     if (startConf) {
-        if (startConf.chute.length > 0) path.push(...startConf.chute);
+        // 1. Chute path first
+        if (startConf.chute && startConf.chute.length > 0) {
+            path.push(...startConf.chute);
+        }
+
+        // 2. Initial partial lap to reach the finish line first time
         if (startConf.mergeIndex <= finishIdx) {
             path.push(...mainLoop.slice(startConf.mergeIndex, finishIdx + 1));
         } else {
+            // Wraps around if merge is after finish line index
             path.push(...mainLoop.slice(startConf.mergeIndex));
             path.push(...mainLoop.slice(0, finishIdx + 1));
         }
+
+        // 3. Complete full loops
         for (let i = 0; i < startConf.laps; i++) {
             path.push(...mainLoop.slice(finishIdx + 1));
             path.push(...mainLoop.slice(0, finishIdx + 1));
         }
     } else {
+        // Fallback: Start at finish line and do 1 full loop
         path.push(...mainLoop.slice(finishIdx));
         path.push(...mainLoop.slice(0, finishIdx + 1));
     }
@@ -93,16 +119,17 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
      }, 0);
   }, [trackConfig, raceDistance, raceSurface]);
 
-  // 4. ANIMATION LOOP
   useEffect(() => {
     if (!imageLoaded) return; 
 
     let animationFrameId: number;
     let lastTimestamp = 0;
     let accumulatedTime = 0; 
+    let lastLogIndex = -1;
 
     const maxTime = Math.max(...outcome.results.map(r => r.time));
     const path = activePath.current;
+    const skillTimers = new Array(outcome.results.length).fill(0);
 
     const render = (timestamp: number) => {
       if (!lastTimestamp) lastTimestamp = timestamp;
@@ -112,8 +139,27 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       if (!finished) accumulatedTime += deltaTime * speedRef.current;
 
       const raceProgress = accumulatedTime / maxTime; 
-      const activeLog = outcome.log.filter(l => l.timePct <= raceProgress).pop();
-      if (activeLog) setCurrentCommentary(activeLog.message);
+      const logIdx = outcome.log.findIndex(l => l.timePct > raceProgress);
+      const activeIdx = logIdx === -1 ? outcome.log.length - 1 : logIdx - 1;
+      
+      if (activeIdx !== lastLogIndex && activeIdx >= 0) {
+          const entry = outcome.log[activeIdx];
+          setCurrentCommentary(entry.message);
+          lastLogIndex = activeIdx;
+
+          if (entry.message.includes("Ultimate")) {
+              const horseResult = outcome.results.find(r => entry.message.includes(r.uma.lastName));
+              if (horseResult) {
+                  const idx = outcome.results.indexOf(horseResult);
+                  skillTimers[idx] = 60; 
+                  setSkillCutIn({
+                      name: `${horseResult.uma.firstName} ${horseResult.uma.lastName}`,
+                      text: "The Zone Entered!"
+                  });
+                  setTimeout(() => setSkillCutIn(null), 2000);
+              }
+          }
+      }
 
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
@@ -126,10 +172,12 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
         if (path.length > 0) {
             outcome.results.forEach((res, idx) => {
-              let pct = accumulatedTime / res.time;
-              if (pct > 1) pct = 1;
-
-              const currentDist = pct * totalPathLength.current;
+              let rawPct = accumulatedTime / res.time;
+              if (rawPct > 1) rawPct = 1;
+              const strat = getVisualStrategy(res.uma);
+              const visualPct = getVisualProgress(rawPct, strat);
+              const currentDist = visualPct * totalPathLength.current;
+              
               let distTraveled = 0;
               let pos = { x: path[0].x, y: path[0].y };
               let angle = 0;
@@ -149,28 +197,49 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
               }
 
               const totalRunners = outcome.results.length;
-              // CLAMP FIX: Scale lane density based on total runners but cap max width
               const laneSpacing = Math.min(3, 40 / totalRunners);
-              let laneOffset = (idx - (totalRunners / 2)) * laneSpacing;
-              
-              // HARD LIMIT: Ensure they don't exit the 800x450 track visual boundaries
+              const wiggle = Math.sin(accumulatedTime * 2 + idx) * 0.5;
+              let laneOffset = (idx - (totalRunners / 2)) * laneSpacing + wiggle;
               laneOffset = Math.max(-15, Math.min(15, laneOffset));
 
               const perpAngle = angle + (Math.PI / 2);
               const finalX = pos.x + (Math.cos(perpAngle) * laneOffset);
               const finalY = pos.y + (Math.sin(perpAngle) * laneOffset);
 
+              const isSkillActive = skillTimers[idx] > 0;
+              if (isSkillActive) skillTimers[idx]--;
+
+              if (visualPct > 0.7 || isSkillActive) {
+                  ctx.beginPath();
+                  ctx.arc(finalX, finalY, isSkillActive ? 12 : 8, 0, 2 * Math.PI);
+                  ctx.fillStyle = isSkillActive ? `rgba(255, 215, 0, 0.6)` : `rgba(255, 255, 255, 0.3)`;
+                  ctx.fill();
+              }
+
+              if (visualPct > 0.8) {
+                  ctx.beginPath();
+                  ctx.moveTo(finalX, finalY);
+                  ctx.lineTo(finalX - Math.cos(angle)*20, finalY - Math.sin(angle)*20);
+                  ctx.strokeStyle = `rgba(255, 255, 255, 0.4)`;
+                  ctx.lineWidth = 2;
+                  ctx.stroke();
+              }
+
               ctx.beginPath();
               ctx.arc(finalX, finalY, 6, 0, 2 * Math.PI); 
-              ctx.fillStyle = runnerColors[idx];
+              ctx.fillStyle = isSkillActive ? '#fff' : runnerColors[idx];
               ctx.fill();
-              ctx.strokeStyle = 'white';
+              ctx.strokeStyle = isSkillActive ? '#f1c40f' : 'white';
+              ctx.lineWidth = isSkillActive ? 3 : 1;
               ctx.stroke();
 
-              if (pct < 1) { 
+              if (visualPct < 1) { 
                   ctx.fillStyle = 'white';
-                  ctx.font = 'bold 10px Arial';
+                  ctx.font = isSkillActive ? 'bold 12px Arial' : 'bold 10px Arial';
+                  ctx.shadowColor = 'black';
+                  ctx.shadowBlur = 4;
                   ctx.fillText(res.uma.lastName, finalX - 10, finalY - 10);
+                  ctx.shadowBlur = 0;
               }
             });
         }
@@ -195,15 +264,32 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       transition: 'all 0.3s ease'
     }}>
       
-      {/* TOP UI BAR */}
+      {skillCutIn && (
+        <div style={{
+            position: 'absolute', top: '20%', left: '0', right: '0', 
+            height: '150px',
+            background: 'linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(243, 156, 18, 0.9) 20%, rgba(243, 156, 18, 0.9) 80%, rgba(0,0,0,0) 100%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            zIndex: 4000, transform: 'skewX(-20deg)', borderTop: '4px solid white', borderBottom: '4px solid white',
+            animation: 'slideIn 0.2s ease-out'
+        }}>
+            <h1 style={{ color: 'white', fontStyle: 'italic', fontSize: '3rem', margin: 0, textShadow: '4px 4px #c0392b' }}>
+                {skillCutIn.text}
+            </h1>
+            <h2 style={{ color: '#2c3e50', fontSize: '1.5rem', margin: 0, fontWeight: '900', textTransform: 'uppercase' }}>
+                {skillCutIn.name}
+            </h2>
+        </div>
+      )}
+
       <div style={{ 
         display: 'flex', justifyContent: 'space-between', 
         width: isTheaterMode ? '98%' : '80%', 
         maxWidth: '1400px', marginBottom: '15px', alignItems: 'center' 
       }}>
       <h2 style={{ color: 'white', margin: 0, fontSize: '1.4rem' }}>
-  📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
-</h2>
+         📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
+      </h2>
         
         <div style={{ display: 'flex', gap: '15px' }}>
           <button onClick={() => setIsTheaterMode(!isTheaterMode)} style={btnStyle(isTheaterMode)}>
@@ -219,7 +305,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
         </div>
       </div>
 
-      {/* SCALEABLE CONTAINER */}
       <div style={{ 
         position: 'relative', 
         width: isTheaterMode ? '95vw' : '80vw',
@@ -247,7 +332,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
             }} 
         />
         
-        {/* COMMENTARY */}
         {!showResults && (
             <div style={{
                 position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
@@ -259,7 +343,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
             </div>
         )}
 
-        {/* RESULTS */}
         {showResults && (
             <div style={{
                 position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,

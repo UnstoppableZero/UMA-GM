@@ -1,4 +1,3 @@
-// src/pages/DashboardPage.tsx
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { getRacesByWeek } from '../data/calendar';
@@ -6,10 +5,11 @@ import { trainUma } from '../training';
 import { simulateRace, type RaceOutcome } from '../race';
 import { useState, useEffect } from 'react';
 import { RaceViewer } from '../components/RaceViewer';
-import { generateUma } from '../generator'; 
+import { generateTieredUma } from '../generator'; 
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
 import { autoAllocateHorses, calculateOdds, calculateRaceRating } from '../logic/matchmaking'; 
+import { replenishRosters, processWeeklyAIGrowth } from '../logic/season';
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -30,11 +30,15 @@ export function DashboardPage() {
   const [raceOutcome, setRaceOutcome] = useState<RaceOutcome | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   
-  // NEW: State for Multi-Race Queue
-  const [raceQueue, setRaceQueue] = useState<{outcome: RaceOutcome, location: string}[]>([]);
+  const [raceQueue, setRaceQueue] = useState<{
+      outcome: RaceOutcome, 
+      location: string, 
+      distance: number, 
+      surface: 'Turf' | 'Dirt'
+  }[]>([]);
+  
   const [queueIndex, setQueueIndex] = useState(0);
 
-  // Auto-advance simulation
   useEffect(() => {
     let timer: number;
     if (isSimulating && !raceOutcome && raceQueue.length === 0) {
@@ -47,47 +51,68 @@ export function DashboardPage() {
 
   if (!gameState || !roster) return <div style={{color: 'var(--text-primary)', padding: '20px'}}>Loading...</div>;
 
-  // 1. Get ALL races for this week
   const currentEvents = getRacesByWeek(gameState.week);
   
-  // 2. Pre-calculate the allocations for Display
-  const allocations = roster.length > 0 ? autoAllocateHorses(roster, currentEvents) : {};
+  const allocations = roster.length > 0 
+    ? autoAllocateHorses(roster, currentEvents, gameState.week, gameState.year) 
+    : {};
 
   const initLeagueMode = async () => {
-    if (!confirm("⚠️ This will WIPE everything and start 'UmaGM League Mode'. Ready?")) return;
+    if (!confirm("⚠️ This will WIPE everything and generate a balanced league (~230 horses). Ready?")) return;
+    
     await db.umas.clear();
     await db.teams.clear();
     await db.gameState.update(1, { year: 1, week: 1, money: 1000000 });
     await db.news.clear();
     await db.raceHistory.clear();
+    
     const teamsData = LEAGUE_TEAMS.map(t => ({ ...t, history: { wins: 0, championships: 0, earnings: 0 } }));
     await db.teams.bulkAdd(teamsData);
     
     const newRoster: Uma[] = [];
-    for (const team of LEAGUE_TEAMS) {
-      for (let i = 0; i < 10; i++) {
-        const horse = generateUma();
-        horse.teamId = team.id; 
-        const buff = (team.prestige - 50) * 2; 
-        horse.stats.speed += buff;
-        horse.stats.stamina += buff;
-        horse.stats.power += buff;
-        horse.energy = 100;
-        horse.fatigue = 0;
-        horse.injuryWeeks = 0;
+
+    for (let i = 0; i < 8; i++) {
+        const horse = generateTieredUma(1); 
+        horse.teamId = 'player';
         newRoster.push(horse);
-      }
     }
+
+    const eliteTeams = teamsData.filter(t => t.prestige >= 90 && t.id !== 'player');
+    for (const team of eliteTeams) {
+        for (let i = 0; i < 10; i++) { 
+            const horse = generateTieredUma(1);
+            horse.teamId = team.id;
+            newRoster.push(horse);
+        }
+    }
+
+    const midTeams = teamsData.filter(t => t.prestige >= 60 && t.prestige < 90);
+    for (const team of midTeams) {
+        for (let i = 0; i < 15; i++) { 
+            const horse = generateTieredUma(2);
+            horse.teamId = team.id;
+            newRoster.push(horse);
+        }
+    }
+
+    const mobTeams = teamsData.filter(t => t.prestige < 60);
+    for (const team of mobTeams) {
+        for (let i = 0; i < 25; i++) { 
+            const horse = generateTieredUma(3); 
+            horse.teamId = team.id;
+            newRoster.push(horse);
+        }
+    }
+
     await db.umas.bulkAdd(newRoster);
-    alert("🏆 League Initialized!");
+    alert(`🏆 League Initialized with ${newRoster.length} horses!`);
     window.location.reload();
   };
 
   const advanceWeek = async (viewRace = true) => {
     let currentMoney = gameState.money; 
-    const raceResults: {outcome: RaceOutcome, location: string}[] = [];
+    const raceResults: {outcome: RaceOutcome, location: string, distance: number, surface: 'Turf' | 'Dirt'}[] = [];
 
-    // A. Run all races mathematically first
     for (const race of currentEvents) {
         const allocation = allocations[race.id];
         if (!allocation || allocation.field.length < 2) continue;
@@ -95,9 +120,13 @@ export function DashboardPage() {
         const outcome = simulateRace(allocation.field, race.distance);
         (outcome as any).displayName = race.name;
         
-        raceResults.push({ outcome, location: race.location });
+        raceResults.push({ 
+            outcome, 
+            location: race.location, 
+            distance: race.distance, 
+            surface: race.surface as 'Turf' | 'Dirt' 
+        });
 
-        // Process Results
         const top3Finishers = outcome.results.slice(0, 3).map(r => ({
             id: r.uma.id, name: `${r.uma.firstName} ${r.uma.lastName}`, time: r.time
         }));
@@ -107,13 +136,69 @@ export function DashboardPage() {
             if (umaIndex === -1) continue;
             const uma = roster[umaIndex];
 
+            // --- RACE XP (G1 TUNED) ---
+            // Winners get strong boosts (especially G1s) to reach potential before age 5/6.
+            // But we respect the Potential Cap so they don't become 99 OVR gods instantly.
+            
+            const currentTotal = uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom;
+            const currentRating = Math.floor(currentTotal / 50) + 10;
+
+            // Only gain XP if below potential
+            if (uma.potential && currentRating < uma.potential) {
+                let xpGain = 1; // Base participation
+                
+                if (res.rank === 1) xpGain = 4;      // Winner (Standard Race)
+                else if (res.rank === 2) xpGain = 2; // Runner-up
+                
+                // G1 Multiplier:
+                // Winner = 4 + 6 = +10 All Stats.
+                // 2nd Place = 2 + 6 = +8 All Stats.
+                if (race.grade === 'G1') xpGain += 6; 
+                
+                uma.stats.speed = Math.min(1200, uma.stats.speed + xpGain);
+                uma.stats.stamina = Math.min(1200, uma.stats.stamina + xpGain);
+                uma.stats.power = Math.min(1200, uma.stats.power + xpGain);
+                uma.stats.guts = Math.min(1200, uma.stats.guts + xpGain);
+                uma.stats.wisdom = Math.min(1200, uma.stats.wisdom + xpGain);
+            }
+            // ---------------------------
+
+            const injuryRisk = 0.01 + Math.max(0, ((uma.fatigue || 0) - 20) * 0.001);
+            if (Math.random() < injuryRisk) {
+                const severityRoll = Math.random();
+                let weeks = 4;
+                let type = "Minor";
+                let potDamage = 0; 
+
+                if (severityRoll > 0.95) { 
+                    weeks = 20; type = "Catastrophic"; potDamage = 10; 
+                } else if (severityRoll > 0.80) { 
+                    weeks = 10; type = "Severe"; potDamage = 5; 
+                } else if (severityRoll > 0.50) { 
+                    weeks = 6; type = "Major"; potDamage = 0; 
+                } else { 
+                    weeks = 3; type = "Minor"; potDamage = 0; 
+                }
+
+                uma.injuryWeeks = weeks + Math.floor(Math.random() * 3);
+                if (potDamage > 0 && uma.potential) {
+                    uma.potential = Math.max(0, uma.potential - potDamage);
+                }
+
+                const damageText = potDamage > 0 ? `Potential drop: -${potDamage}.` : `Expected to fully recover.`;
+                db.news.add({ 
+                    year: gameState.year, week: gameState.week, 
+                    message: `🚑 [${type} Injury] ${uma.firstName} ${uma.lastName} hurt a leg in the ${race.name}. Out ${uma.injuryWeeks}w. ${damageText}`, 
+                    type: 'important' 
+                });
+            }
+
             if (!uma.history) uma.history = [];
             uma.history.push({ year: gameState.year, week: gameState.week, raceName: race.name, rank: res.rank, time: res.time });
             uma.career.races = (uma.career.races || 0) + 1;
             if (res.rank === 1) uma.career.wins = (uma.career.wins || 0) + 1;
             if (res.rank <= 3) uma.career.top3 = (uma.career.top3 || 0) + 1;
 
-            // Prize Money
             let prize = 0;
             if (res.rank === 1) prize = race.purse;
             else if (res.rank === 2) prize = race.purse * 0.4;
@@ -122,22 +207,18 @@ export function DashboardPage() {
             if (prize > 0) {
                 uma.career.earnings += prize;
                 if (uma.teamId === 'player') currentMoney += prize;
-                // Note: Team update skipped for brevity, can add back if needed
             }
 
-            // News & History
             if (res.rank === 1) {
                 const fullName = `${uma.firstName} ${uma.lastName}`;
                 db.news.add({ year: gameState.year, week: gameState.week, message: `🏆 [${race.grade}] ${fullName} wins the ${race.name}!`, type: 'info' });
                 db.raceHistory.add({ year: gameState.year, week: gameState.week, raceName: race.name, winnerId: uma.id, winnerName: fullName, time: res.time, top3: top3Finishers });
             }
             
-            // Fatigue from racing
             uma.energy = Math.max(0, (uma.energy || 100) - 25);
-            uma.fatigue = Math.min(100, (uma.fatigue || 0) + 10);
+            uma.fatigue = Math.min(100, (uma.fatigue || 0) + 15);
         }
 
-        // DNQ Messages
         const myExcluded = allocation.excluded.filter(u => u.teamId === 'player');
         if (myExcluded.length > 0) {
              const names = myExcluded.map(u => u.lastName).join(", ");
@@ -145,7 +226,6 @@ export function DashboardPage() {
         }
     }
 
-    // B. Train everyone else
     const racedIds = new Set(Object.values(allocations).flatMap(a => a.field.map(u => u.id)));
     
     roster.forEach(uma => {
@@ -153,33 +233,73 @@ export function DashboardPage() {
             if (uma.injuryWeeks > 0) {
                 uma.injuryWeeks--;
                 uma.energy = 100;
-            } else if ((uma.fatigue || 0) > 50) {
-                uma.energy = 100; uma.fatigue = 0; // Rest
-            } else {
-                // Train
-                uma.energy = Math.max(0, (uma.energy || 100) - 10);
-                const trainRes = trainUma(uma, 'balanced');
-                // stats updated in place by reference
+            } 
+            else if ((uma.fatigue || 0) > 60) {
+                uma.energy = 100; uma.fatigue = 0; 
+            } 
+            else {
+                const trainInjuryRisk = (uma.fatigue || 0) > 30 ? 0.05 : 0.005; 
+                if (Math.random() < trainInjuryRisk) {
+                    uma.injuryWeeks = 4;
+                    if (uma.teamId === 'player') {
+                        db.news.add({ year: gameState.year, week: gameState.week, message: `🚑 ${uma.firstName} ${uma.lastName} tweaked a muscle training. Out 4w.`, type: 'important' });
+                    }
+                } else {
+                    uma.energy = Math.max(0, (uma.energy || 100) - 10);
+                    uma.fatigue = (uma.fatigue || 0) + 5; 
+                    if (uma.teamId === 'player') {
+                        trainUma(uma, 'balanced');
+                    }
+                }
             }
         }
     });
 
-    await db.umas.bulkPut(roster);
+    const grewRoster = processWeeklyAIGrowth(roster);
 
-    // C. Queue Viewing
     if (viewRace && raceResults.length > 0) {
+        await db.umas.bulkPut(grewRoster);
         setRaceQueue(raceResults);
         setQueueIndex(0);
         setRaceOutcome(raceResults[0].outcome);
-        // Note: Location needs to be handled in the render
     } else {
-        // Advance Time
         let newWeek = gameState.week + 1;
         let newYear = gameState.year;
+        
         if (newWeek > 52) { 
-            newWeek = 1; newYear++; setIsSimulating(false);
-            // Retirement logic here
+            newWeek = 1; 
+            newYear++; 
+            setIsSimulating(false);
+
+            const { checkRetirement } = await import('../logic/ai');
+            let retiredCount = 0;
+            
+            grewRoster.forEach(u => {
+                u.age++;
+                if (u.status === 'active' && checkRetirement(u, gameState.year)) {
+                    u.status = 'retired';
+                    retiredCount++;
+                }
+            });
+
+            const rookies = replenishRosters(grewRoster);
+            if (rookies.length > 0) {
+                grewRoster.push(...rookies);
+                db.news.add({ 
+                    year: newYear, week: 1, 
+                    message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
+                    type: 'info' 
+                });
+            } else {
+                 db.news.add({ 
+                    year: newYear, week: 1, 
+                    message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired.`, 
+                    type: 'info' 
+                });
+            }
         }
+        
+        await db.umas.bulkPut(grewRoster);
         await db.gameState.update(1, { week: newWeek, year: newYear, money: currentMoney });
     }
   };
@@ -192,11 +312,44 @@ export function DashboardPage() {
       } else {
           setRaceOutcome(null);
           setRaceQueue([]);
-          // NOW advance time
+          
           let newWeek = gameState.week + 1;
           let newYear = gameState.year;
-          if (newWeek > 52) { newWeek = 1; newYear++; setIsSimulating(false); }
-          db.gameState.update(1, { week: newWeek, year: newYear }); // Money already saved
+          
+          if (newWeek > 52) { 
+              newWeek = 1; 
+              newYear++; 
+              setIsSimulating(false);
+              
+              import('../logic/season').then(async ({ replenishRosters }) => {
+                  import('../logic/ai').then(async ({ checkRetirement }) => {
+                      const currentRoster = await db.umas.toArray();
+                      let retiredCount = 0;
+                      
+                      currentRoster.forEach(u => {
+                          u.age++;
+                          if (u.status === 'active' && checkRetirement(u, gameState.year)) {
+                              u.status = 'retired';
+                              retiredCount++;
+                          }
+                      });
+                      
+                      const rookies = replenishRosters(currentRoster);
+                      if (rookies.length > 0) currentRoster.push(...rookies);
+                      
+                      db.news.add({ 
+                          year: newYear, week: 1, 
+                          message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
+                          type: 'info' 
+                      });
+                      
+                      await db.umas.bulkPut(currentRoster);
+                      await db.gameState.update(1, { week: newWeek, year: newYear }); 
+                  });
+              });
+          } else {
+              db.gameState.update(1, { week: newWeek, year: newYear }); 
+          }
       }
   };
 
@@ -210,7 +363,9 @@ export function DashboardPage() {
             <RaceViewer 
                 outcome={raceOutcome} 
                 onClose={handleRaceClose} 
-                location={raceQueue[queueIndex].location as any} 
+                location={raceQueue[queueIndex].location as any}
+                distance={raceQueue[queueIndex].distance}
+                surface={raceQueue[queueIndex].surface}
             />
         </div>
       ) : (
@@ -218,7 +373,6 @@ export function DashboardPage() {
            <div style={{ flex: 1 }}>
               <h1 style={{ color: 'var(--text-primary)', margin: '0 0 10px 0' }}>Year {gameState.year} - Week {gameState.week}</h1>
               
-              {/* RACE CARDS CONTAINER */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 {currentEvents.length > 0 ? currentEvents.map(race => {
                     const allocation = allocations[race.id];
@@ -243,7 +397,6 @@ export function DashboardPage() {
                                     </div>
                                 )}
                             </div>
-                            {/* MINI FIELD PREVIEW */}
                             <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                                 <strong>Top Contender:</strong> {field.length > 0 ? `${field[0].lastName} (${calculateRaceRating(field[0], race)})` : 'None'}
                             </div>
@@ -256,7 +409,6 @@ export function DashboardPage() {
                 )}
               </div>
 
-              {/* ACTION BAR */}
               <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
                   <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                       ▶ Run Race Day
@@ -270,7 +422,6 @@ export function DashboardPage() {
               </div>
            </div>
 
-           {/* NEWS PANEL */}
            <div style={{ width: '300px', backgroundColor: 'var(--bg-surface)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-default)', height: '500px', overflowY: 'auto' }}>
               <h3 style={{ marginTop: 0, borderBottom: '2px solid var(--border-default)', paddingBottom: '10px', color: 'var(--text-secondary)' }}>📰 League News</h3>
               {latestNews && latestNews.length > 0 ? (

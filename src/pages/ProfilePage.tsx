@@ -1,8 +1,53 @@
-// src/pages/ProfilePage.tsx
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { calculateOVR, getOVRColor } from '../utils';
+import type { RaceRecord } from '../types';
+
+// --- DYNAMIC ACHIEVEMENT CALCULATOR ---
+function calculateAchievements(history: RaceRecord[]) {
+  const badges = [];
+  
+  // Helper: Check if they won a race containing "NamePart"
+  const hasWon = (namePart: string) => history.some(h => h.raceName.includes(namePart) && h.rank === 1);
+
+  // 1. CLASSIC TRIPLE CROWN (Satsuki Sho -> Derby -> Kikuka Sho)
+  if (hasWon("Satsuki Sho") && (hasWon("Tokyo Yushun") || hasWon("Japanese Derby")) && hasWon("Kikuka Sho")) {
+      badges.push({ label: "Triple Crown", icon: "👑", color: "#f1c40f", border: "#f39c12" });
+  }
+
+  // 2. FILLIES TRIPLE CROWN (Oka Sho -> Oaks -> Shuka Sho)
+  if (hasWon("Oka Sho") && (hasWon("Yushun Himba") || hasWon("Japanese Oaks")) && hasWon("Shuka Sho")) {
+      badges.push({ label: "Fillies' Triple Crown", icon: "🎀", color: "#ff69b4", border: "#d63384" });
+  }
+
+  // 3. GRAND PRIX (Arima + Takarazuka)
+  if (hasWon("Arima Kinen") && hasWon("Takarazuka Kinen")) {
+      badges.push({ label: "Grand Prix Master", icon: "🔥", color: "#e74c3c", border: "#c0392b" });
+  }
+
+  // 4. TENNO SHO SHIELD (Spring + Autumn)
+  if (hasWon("Tenno Sho (Spring)") && hasWon("Tenno Sho (Autumn)")) {
+      badges.push({ label: "Tenno Sho Supreme", icon: "🛡️", color: "#9b59b6", border: "#8e44ad" });
+  }
+
+  // 5. MILE KING (Yasuda + Mile CS)
+  if (hasWon("Yasuda Kinen") && hasWon("Mile Championship")) {
+      badges.push({ label: "Mile King", icon: "🌪️", color: "#3498db", border: "#2980b9" });
+  }
+
+  // 6. SPRINT KING (Takamatsunomiya + Sprinters Stakes)
+  if (hasWon("Takamatsunomiya") && hasWon("Sprinters Stakes")) {
+      badges.push({ label: "Sprint King", icon: "⚡", color: "#f39c12", border: "#e67e22" });
+  }
+
+  // 7. DIRT KING (Champions Cup + February Stakes)
+  if (hasWon("Champions Cup") && hasWon("February Stakes")) {
+      badges.push({ label: "Dirt King", icon: "🏜️", color: "#795548", border: "#5d4037" });
+  }
+
+  return badges;
+}
 
 export function ProfilePage() {
   const { id } = useParams(); 
@@ -14,11 +59,16 @@ export function ProfilePage() {
   const ovr = calculateOVR(uma);
   const ovrColor = getOVRColor(ovr);
 
-  // --- DERIVE ACCURATE RECORD FROM HISTORY ---
+  // --- DERIVE RACING RECORD ---
   const history = uma.history || [];
+  const starts = history.length;
   const wins = history.filter(h => h.rank === 1).length;
-  const races = history.length;
-  const losses = Math.max(0, races - wins);
+  const seconds = history.filter(h => h.rank === 2).length;
+  const thirds = history.filter(h => h.rank === 3).length;
+  const recordString = `${starts} (${wins}-${seconds}-${thirds})`;
+
+  // --- CALCULATE ACHIEVEMENTS ---
+  const achievements = calculateAchievements(history);
 
   // --- RADAR CHART MATH ---
   const renderRadarChart = () => {
@@ -88,7 +138,8 @@ export function ProfilePage() {
                 <h1 style={{ margin: '0 0 5px 0', color: '#2c3e50', fontSize: '32px' }}>{uma.firstName} {uma.lastName}</h1>
                 <div style={{ fontSize: '15px', color: '#7f8c8d', display: 'flex', gap: '15px', fontWeight: 'bold', alignItems: 'center' }}>
                     <span>🎂 Age {uma.age}</span>
-                    <span style={{color: '#34495e'}}>🏆 {wins}-{losses} Record</span>
+                    {/* UPDATED RECORD DISPLAY */}
+                    <span style={{color: '#34495e'}}>🏆 {recordString}</span>
                     <span style={{color: '#27ae60'}}>💰 ${uma.career.earnings.toLocaleString()}</span>
                     {uma.injuryWeeks > 0 && (
                       <span style={{ backgroundColor: '#e74c3c', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
@@ -130,16 +181,24 @@ export function ProfilePage() {
       </div>
 
       {/* =========================================
-          TROPHY CASE
+          TROPHY CASE (DYNAMICALLY CALCULATED)
       ========================================= */}
-      {uma.trophies && uma.trophies.length > 0 && (
+      {achievements.length > 0 && (
         <div style={{ backgroundColor: '#fff3cd', padding: '15px', marginBottom: '20px', borderRadius: '12px', border: '1px solid #ffeeba', textAlign: 'center' }}>
-          <h3 style={{ margin: '0 0 10px 0', color: '#856404' }}>🏆 Trophy Case</h3>
+          <h3 style={{ margin: '0 0 15px 0', color: '#856404' }}>🏆 Major Titles</h3>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
-            {uma.trophies.map((trophy, idx) => (
-              <span key={idx} style={{ fontSize: '16px', fontWeight: 'bold', backgroundColor: 'white', padding: '6px 16px', borderRadius: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                {trophy}
-              </span>
+            {achievements.map((badge, idx) => (
+              <div key={idx} style={{ 
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  backgroundColor: 'white', color: '#333', 
+                  padding: '8px 16px', borderRadius: '50px',
+                  border: `2px solid ${badge.border}`, 
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.05)',
+                  fontWeight: 'bold', fontSize: '14px'
+              }}>
+                  <span style={{ fontSize: '18px' }}>{badge.icon}</span>
+                  <span>{badge.label}</span>
+              </div>
             ))}
           </div>
         </div>
@@ -205,8 +264,8 @@ export function ProfilePage() {
 
           {/* SKILLS */}
           <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-             <h3 style={sectionHeaderStyle}>⚡ Special Skills</h3>
-             {uma.skills && uma.skills.length > 0 ? (
+              <h3 style={sectionHeaderStyle}>⚡ Special Skills</h3>
+              {uma.skills && uma.skills.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {uma.skills.map((skill, idx) => (
                     <div key={idx} style={{ borderLeft: '4px solid #f1c40f', backgroundColor: '#fdfbf2', padding: '12px', borderRadius: '0 6px 6px 0' }}>
@@ -215,9 +274,9 @@ export function ProfilePage() {
                     </div>
                 ))}
                 </div>
-             ) : (
+              ) : (
                 <div style={{ color: '#95a5a6', fontStyle: 'italic' }}>No special skills acquired yet.</div>
-             )}
+              )}
           </div>
 
         </div>
@@ -274,7 +333,7 @@ export function ProfilePage() {
   );
 }
 
-// Sub-components and styles remain as defined in your provided snippet
+// Sub-components
 const StatBar = ({ label, val }: { label: string, val: number }) => {
     let grade = 'G'; let color = '#bdc3c7';
     if (val >= 1000) { grade = 'S'; color = '#f1c40f'; }

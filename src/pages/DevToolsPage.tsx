@@ -9,7 +9,6 @@ import { getRaceByWeek, TOTAL_WEEKS } from '../data/calendar';
 import { getQualifiedEntrants, createOfficialField } from '../logic/matchmaking';
 
 const TRACKS = ['Tokyo', 'Nakayama', 'Kyoto', 'Hanshin', 'Chukyo', 'Sapporo', 'Niigata', 'Fukushima', 'Kokura', 'Hakodate', 'Ohi'];
-const DISTANCES = [1200, 1400, 1600, 1800, 2000, 2200, 2400, 2500, 3000, 3200];
 
 export function DevToolsPage() {
   const [selectedTrack, setSelectedTrack] = useState('Tokyo');
@@ -61,9 +60,10 @@ export function DevToolsPage() {
       const raceEvent = getRaceByWeek(currentWeek);
       if (raceEvent) {
           const actives = roster.filter(u => u.status === 'active');
-          const qualified = getQualifiedEntrants(actives, raceEvent);
           
-          // FIX: Added raceEvent as the second argument
+          // FIX: Passed currentWeek and currentYear here
+          const qualified = getQualifiedEntrants(actives, raceEvent, currentWeek, currentYear);
+          
           const { field } = createOfficialField(qualified, raceEvent);
 
           if (field.length >= 2) {

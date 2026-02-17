@@ -1,4 +1,3 @@
-// src/pages/LeagueRosterPage.tsx
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Link } from 'react-router-dom'; 
@@ -15,17 +14,17 @@ export function LeagueRosterPage() {
   const [sortKey, setSortKey] = useState<string>('ovr');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const calculatePotential = (uma: Uma) => {
-    const stats = [uma.stats.speed, uma.stats.stamina, uma.stats.power, uma.stats.guts, uma.stats.wisdom];
-    const maxPossible = 1200 * 5;
-    const currentTotal = stats.reduce((a, b) => a + b, 0);
-    return Math.floor(((maxPossible - currentTotal) / maxPossible) * 100);
-  };
-
+  // --- FIX 1: FILTER LEADERS ---
   const leaders = useMemo(() => {
     if (!roster || roster.length === 0) return null;
-    const topOvr = [...roster].sort((a, b) => calculateOVR(b) - calculateOVR(a))[0];
-    const topWins = [...roster].sort((a, b) => (b.career?.wins || 0) - (a.career?.wins || 0))[0];
+    
+    // Only consider ACTIVE horses for league leaders
+    const activeRoster = roster.filter(u => u.status !== 'retired');
+    if (activeRoster.length === 0) return null;
+
+    const topOvr = [...activeRoster].sort((a, b) => calculateOVR(b) - calculateOVR(a))[0];
+    const topWins = [...activeRoster].sort((a, b) => (b.career?.wins || 0) - (a.career?.wins || 0))[0];
+    
     return { topOvr, topWins };
   }, [roster]);
 
@@ -36,18 +35,24 @@ export function LeagueRosterPage() {
 
   const filteredRoster = useMemo(() => {
     if (!roster) return [];
+    
+    // --- FIX 2: FILTER MAIN LIST ---
     let filtered = roster.filter(u => {
+      // 1. Strict Filter: No Retired Horses
+      if (u.status === 'retired') return false;
+
       const matchesSearch = (u.firstName + ' ' + u.lastName).toLowerCase().includes(searchTerm.toLowerCase());
       const matchesTeam = teamFilter === 'all' || u.teamId === teamFilter;
       return matchesSearch && matchesTeam;
     });
+
     return filtered.sort((a, b) => {
       let valA: any, valB: any;
       switch (sortKey) {
         case 'name': valA = a.firstName; valB = b.firstName; break;
         case 'ovr': valA = calculateOVR(a); valB = calculateOVR(b); break;
+        case 'potential': valA = a.potential || 0; valB = b.potential || 0; break;
         case 'wins': valA = a.career?.wins || 0; valB = b.career?.wins || 0; break;
-        case 'potential': valA = calculatePotential(a); valB = calculatePotential(b); break;
         case 'spd': valA = a.stats.speed; valB = b.stats.speed; break;
         case 'sta': valA = a.stats.stamina; valB = b.stats.stamina; break;
         case 'pow': valA = a.stats.power; valB = b.stats.power; break;
@@ -76,8 +81,7 @@ export function LeagueRosterPage() {
             <div style={leaderLabel}>🏆 Most Career Wins</div>
             <div style={leaderName}>{leaders.topWins.firstName} {leaders.topWins.lastName}</div>
             <div style={leaderStat}>
-                {leaders.topWins.career?.wins}-{ (leaders.topWins.career?.races || 0) - (leaders.topWins.career?.wins || 0) } 
-                • Team {leaders.topWins.teamId}
+                {leaders.topWins.career?.wins} Wins • Team {leaders.topWins.teamId}
             </div>
           </div>
         </div>
@@ -106,8 +110,8 @@ export function LeagueRosterPage() {
           <tr>
             <th onClick={() => handleSort('name')} style={thStyle}>Name & Team</th>
             <th onClick={() => handleSort('ovr')} style={{...thStyle, textAlign: 'center'}}>OVR</th>
-            <th onClick={() => handleSort('potential')} style={{...thStyle, textAlign: 'center'}}>POT</th>
-            <th onClick={() => handleSort('wins')} style={{...thStyle, textAlign: 'center'}}>Record (W-L)</th>
+            <th onClick={() => handleSort('potential')} style={{...thStyle, textAlign: 'center', color: '#9b59b6'}}>POT</th>
+            <th onClick={() => handleSort('wins')} style={{...thStyle, textAlign: 'center'}}>Record (1st-2nd-3rd)</th>
             <th onClick={() => handleSort('spd')} style={{...thStyle, textAlign: 'center'}}>Spd</th>
             <th onClick={() => handleSort('sta')} style={{...thStyle, textAlign: 'center'}}>Sta</th>
             <th onClick={() => handleSort('pow')} style={{...thStyle, textAlign: 'center'}}>Pow</th>
@@ -115,9 +119,17 @@ export function LeagueRosterPage() {
         </thead>
         <tbody>
           {filteredRoster.map(uma => {
-            const wins = uma.career?.wins || 0;
-            const races = uma.career?.races || 0;
-            const losses = races - wins;
+            const currentOvr = calculateOVR(uma);
+            const pot = uma.potential || currentOvr;
+
+            const history = uma.history || [];
+            const starts = history.length;
+            const wins = history.filter(h => h.rank === 1).length;
+            const seconds = history.filter(h => h.rank === 2).length;
+            const thirds = history.filter(h => h.rank === 3).length;
+            
+            const recordStr = `${starts} (${wins}-${seconds}-${thirds})`;
+
             return (
               <tr key={uma.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}
                 onMouseOver={e => (e.currentTarget.style.backgroundColor = 'var(--bg-elevated)')}
@@ -136,17 +148,23 @@ export function LeagueRosterPage() {
                       </div>
                   </Link>
                 </td>
+                
                 <td style={{ textAlign: 'center' }}>
-                  <span style={{ fontWeight: 'bold', color: getOVRColor(calculateOVR(uma)) }}>{calculateOVR(uma)}</span>
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#8e44ad' }}>
-                      {calculatePotential(uma)}%
+                  <span style={{ fontWeight: 'bold', fontSize: '15px', color: getOVRColor(currentOvr) }}>
+                    {currentOvr}
                   </span>
                 </td>
-                <td style={{ textAlign: 'center', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                  {wins}-{losses}
+
+                <td style={{ textAlign: 'center' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#9b59b6' }}>
+                    {pot}
+                  </span>
                 </td>
+
+                <td style={{ textAlign: 'center', fontWeight: 'bold', color: 'var(--text-primary)', fontSize: '13px' }}>
+                  {recordStr}
+                </td>
+                
                 <td style={{ textAlign: 'center' }}>{renderGrade(uma.stats.speed)}</td>
                 <td style={{ textAlign: 'center' }}>{renderGrade(uma.stats.stamina)}</td>
                 <td style={{ textAlign: 'center' }}>{renderGrade(uma.stats.power)}</td>
@@ -171,7 +189,7 @@ const leaderStat = { fontSize: '13px', color: 'var(--text-muted)' as const, marg
 
 function getTeamBadge(team?: string) {
   if (!team || team === 'player') return '🏠';
-  const map: Record<string, string> = { 'Spica': '🌟', 'Rigil': '🦅', 'Canopus': '🛠️' };
+  const map: Record<string, string> = { 'spica': '🌟', 'rigil': '🦅', 'canopus': '🔥', 'sirius': '🐺', 'hydra': '🐍', 'pegasus': '🌿', 'orion': '⚒️', 'centaur': '🏹', 'vega': '🍀', 'altair': '🌊', 'capella': '🔮' };
   return <span style={{ fontSize: '16px' }}>{map[team] || '🏁'}</span>;
 }
 

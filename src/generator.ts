@@ -1,9 +1,9 @@
-// src/generator.ts
+import { v4 as uuidv4 } from 'uuid';
 import type { Uma } from './types';
 import { SKILL_DATABASE } from './skills';
 
-// Expanded Name Lists for Variety
-const FIRST_NAMES = [
+// --- NAME DATABASE ---
+const CROWN_NAMES = [
   "Special", "Silence", "Tokai", "Gold", "Mejiro", "Narita", "Rice", "Super", "Oguri", 
   "Tamamo", "Vodka", "Daiwa", "Symboli", "Grass", "El", "T.M.", "Maya", "Manhattan", 
   "Agnes", "Eishin", "Nice", "Twin", "Matikan", "Satono", "Kitasan", "Winning",
@@ -11,10 +11,14 @@ const FIRST_NAMES = [
   "Biwa", "Air", "Hishi", "Yaeno", "Meisho", "Admire", "Zenno", "Katsuragi", 
   "Nishino", "Shinko", "Kawakami", "Curren", "Haru", "Fine", "Marvelous", 
   "Aston", "Seeking", "Fuji", "Mihono", "Mr.", "Dantsu", "Sir", "Yukino", 
-  "Biko", "Ineos", "Sweep", "Jungle", "Machikane", "Shinko", "Tsurumaru", "Nishino"
+  "Biko", "Ineos", "Sweep", "Jungle", "Machikane", "Tsurumaru", "Nakayama",
+  "Deep", "Orfevre", "Gentil", "Almond", "Contrail", "Efforia", "Gran", "Loves", 
+  "Chrono", "Glory", "Panthalassa", "Jack", "Titleholder", "Geraldina", "Songline", 
+  "Liberty", "Do", "Sol", "Justin", "Danon", "Lord", "Heart's", "Screen", "Maurice", 
+  "Rulership", "Kizuna", "Epiphaneia", "Harbinger", "Suave", "Duramente"
 ];
 
-const LAST_NAMES = [
+const SUFFIX_NAMES = [
   "Week", "Suzuka", "Teio", "Ship", "McQueen", "Brian", "Shower", "Creek", "Cap", 
   "Cross", "Scarlet", "Rudolf", "Wonder", "Condor", "Opera", "Top Gun", "Cafe", 
   "Tachyon", "Flash", "Motion", "Nature", "Ticket", "Fukukitaru", "Diamond", "Black",
@@ -22,167 +26,201 @@ const LAST_NAMES = [
   "Shakur", "Amazon", "Muteki", "Doto", "Vega", "Rob Roy", "Ace", "Flower", 
   "Windy", "Princess", "Chan", "Urara", "Digital", "Pearl", "Crown", "City", 
   "Ramonu", "Ardan", "Dober", "Palmer", "Ryan", "Taishin", "C.B.", "Bourbon", 
-  "Kiseki", "Macha", "Zephyr", "Pocket", "Tannhauser", "Tsuyoshi", "Pegasus"
+  "Kiseki", "Macha", "Zephyr", "Pocket", "Tannhauser", "Tsuyoshi", "Pegasus",
+  "Impact", "Donna", "Eye", "Alegria", "Only You", "Genesis", "Vase", "d'Or", 
+  "Holder", "Line", "Island", "Deuce", "Oriens", "Palace", "Mantar", "Force", 
+  "Kanaloa", "Cry", "Hero", "Richard", "Chosan", "Jackal", "Victory", "Dream", 
+  "Hope", "Soul", "Spirit", "Legend", "Myth", "Saga", "Story", "Epic", "Era",
+  "Warrior", "Knight", "King", "Queen", "Prince", "Emperor", "Goddess", "Angel",
+  "Devil", "Ghost", "Phantom", "Dragon", "Phoenix", "Tiger", "Lion", "Wolf", 
+  "Bear", "Eagle", "Hawk", "Storm", "Thunder", "Lightning", "Rain", "Wind", 
+  "Fire", "Ice", "Light", "Dark", "Shadow", "Star", "Moon", "Sun", "Shine"
 ];
 
-function randomInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+const USED_NAMES = new Set<string>();
+
+export function resetNameRegistry() {
+    USED_NAMES.clear();
 }
 
-// -------------------------------------------------------------
-// MAIN GENERATOR
-// -------------------------------------------------------------
-export function generateUma(parent?: Uma): Uma {
-  // 1. DETERMINE TIER
-  const roll = Math.random();
-  let baseStatMin = 300; 
-  let baseStatMax = 420; 
-  
-  if (roll > 0.98) { baseStatMin = 550; baseStatMax = 650; } 
-  else if (roll > 0.85) { baseStatMin = 480; baseStatMax = 580; } 
-  else if (roll > 0.40) { baseStatMin = 400; baseStatMax = 520; } 
-  else { baseStatMin = 300; baseStatMax = 420; }
+function generateUniqueName(): { first: string, last: string } {
+    let name = "";
+    let fName = "";
+    let lName = "";
+    let attempts = 0;
+    do {
+        fName = CROWN_NAMES[Math.floor(Math.random() * CROWN_NAMES.length)];
+        lName = SUFFIX_NAMES[Math.floor(Math.random() * SUFFIX_NAMES.length)];
+        name = `${fName} ${lName}`;
+        attempts++;
+    } while (USED_NAMES.has(name) && attempts < 50);
+    USED_NAMES.add(name);
+    return { first: fName, last: lName };
+}
 
-  // 2. GENERATE BASE STATS
-  const speed = randomInt(baseStatMin, baseStatMax);
-  const stamina = randomInt(baseStatMin, baseStatMax);
-  const power = randomInt(baseStatMin, baseStatMax);
-  const guts = randomInt(baseStatMin, baseStatMax);
-  const wisdom = randomInt(baseStatMin, baseStatMax);
-  
-  // 3. INHERITANCE LOGIC
-  let bonusSpeed = 0;
-  let bonusStamina = 0;
-  let bonusPower = 0;
-  let inheritedTrophies: string[] = [];
+function getRandomSkills(count: number) {
+    const skills = [];
+    const pool = [...SKILL_DATABASE]; 
+    for (let i = 0; i < count; i++) {
+        if (pool.length === 0) break;
+        const idx = Math.floor(Math.random() * pool.length);
+        skills.push(pool[idx]);
+        pool.splice(idx, 1); 
+    }
+    return skills;
+}
 
-  if (parent) {
-    bonusSpeed = Math.min(Math.floor(parent.stats.speed * 0.1), 50);
-    bonusStamina = Math.min(Math.floor(parent.stats.stamina * 0.1), 50);
-    bonusPower = Math.min(Math.floor(parent.stats.power * 0.1), 50);
-    inheritedTrophies.push(`Daughter of ${parent.lastName}`);
+// --- ARCHETYPE TEMPLATES (The "Anti-BBB" System) ---
+const ARCHETYPES = {
+    'Sprinter': { speed: 1.35, stamina: 0.60, power: 1.25, guts: 1.0, wisdom: 0.8 },
+    'Stayer':   { speed: 0.85, stamina: 1.40, power: 0.9, guts: 1.25, wisdom: 0.8 },
+    'Miler':    { speed: 1.20, stamina: 0.85, power: 1.10, guts: 0.9, wisdom: 0.95 },
+    'Classic':  { speed: 1.05, stamina: 1.05, power: 1.0, guts: 1.0, wisdom: 0.9 },
+    'Dirt':     { speed: 0.85, stamina: 1.0, power: 1.40, guts: 1.20, wisdom: 0.75 }
+};
+
+// Updated Signature: Now accepts optional 'forceArchetype'
+export const generateTieredUma = (tier: 1 | 2 | 3, forceArchetype?: string): Uma => {
+  const id = uuidv4();
+  const names = generateUniqueName();
+
+  let baseStatPool = 0;
+  switch (tier) {
+      case 1: baseStatPool = 650; break;
+      case 2: baseStatPool = 550; break;
+      case 3: baseStatPool = 450; break;
   }
+  
+  baseStatPool += Math.floor(Math.random() * 40) - 20; 
 
-  // 4. GENERATE APTITUDE (FIXED RANDOMIZATION)
-  const isDirtSpecialist = Math.random() > 0.85; 
-  const isSprinter = Math.random() > 0.7; 
-  const isStayer = Math.random() > 0.8; 
-
-  // --- NEW STRATEGY LOGIC ---
-  // Pick a "Preferred Strategy" so they are good at one thing, 
-  // rather than mediocre at everything.
-  const styleRoll = Math.random();
-  let strat = { runner: 1, leader: 1, betweener: 1, chaser: 1 };
-
-  if (styleRoll < 0.20) {
-      // RUNNER (Great Start, fades late)
-      strat = {
-          runner: randomInt(8, 10), // A or S
-          leader: randomInt(4, 7),  // C or B
-          betweener: randomInt(1, 4), 
-          chaser: randomInt(1, 2)
-      };
-  } else if (styleRoll < 0.50) {
-      // LEADER (Good positioning)
-      strat = {
-          runner: randomInt(4, 6),
-          leader: randomInt(8, 10), // A or S
-          betweener: randomInt(5, 7),
-          chaser: randomInt(1, 3)
-      };
-  } else if (styleRoll < 0.80) {
-      // BETWEENER (Mid-pack strike)
-      strat = {
-          runner: randomInt(1, 3),
-          leader: randomInt(5, 7),
-          betweener: randomInt(8, 10), // A or S
-          chaser: randomInt(4, 6)
-      };
+  const types = ['Sprinter', 'Miler', 'Classic', 'Stayer', 'Dirt'] as const;
+  
+  // FIX: Use forced archetype if provided
+  let archetype: keyof typeof ARCHETYPES;
+  if (forceArchetype && types.includes(forceArchetype as any)) {
+      archetype = forceArchetype as keyof typeof ARCHETYPES;
   } else {
-      // CHASER (Last to First)
-      strat = {
-          runner: randomInt(1, 2),
-          leader: randomInt(2, 4),
-          betweener: randomInt(5, 7),
-          chaser: randomInt(8, 10) // A or S
-      };
+      archetype = types[Math.floor(Math.random() * types.length)];
   }
 
-  const aptitude = {
-       surface: { 
-         turf: isDirtSpecialist ? 2 : 8, 
-         dirt: isDirtSpecialist ? 8 : 1 
-       },
-       distance: { 
-         short: isSprinter ? 8 : 4, 
-         mile: 6, 
-         medium: 7, 
-         long: isStayer ? 8 : 3 
-       },
-       strategy: strat // Use the randomized object
+  const mults = ARCHETYPES[archetype];
+
+  const applyStat = (mult: number) => {
+      const val = (baseStatPool * mult) + (Math.floor(Math.random() * 30) - 15);
+      return Math.floor(Math.min(1000, Math.max(300, val)));
   };
 
-  // 5. GENERATE INNATE SKILLS
-  const totalStats = speed + stamina + power + guts + wisdom;
-  let skillCount = 0;
-  if (totalStats > 2800) skillCount = Math.random() > 0.4 ? 2 : 1;
-  else if (totalStats > 2200) skillCount = Math.random() > 0.6 ? 1 : 0;
-  else if (totalStats > 1600) skillCount = Math.random() > 0.9 ? 1 : 0;
+  const stats = {
+      speed: applyStat(mults.speed),
+      stamina: applyStat(mults.stamina),
+      power: applyStat(mults.power),
+      guts: applyStat(mults.guts),
+      wisdom: applyStat(mults.wisdom)
+  };
 
-  const innateSkills = [];
-  const availableSkills = [...SKILL_DATABASE];
-  
-  for (let i = 0; i < skillCount; i++) {
-      if (availableSkills.length === 0) break;
-      const randIdx = Math.floor(Math.random() * availableSkills.length);
-      innateSkills.push(availableSkills[randIdx]);
-      availableSkills.splice(randIdx, 1);
-  }
+  // APTITUDES
+  const aptitudes = {
+      surface: { 
+          turf: archetype === 'Dirt' ? 1 : 8, 
+          dirt: archetype === 'Dirt' ? 8 : 1 
+      },
+      distance: {
+          short: archetype === 'Sprinter' ? 8 : 4,
+          mile: archetype === 'Miler' ? 8 : 4,
+          medium: archetype === 'Classic' ? 8 : 4,
+          long: archetype === 'Stayer' ? 8 : 4
+      },
+      strategy: {
+          runner: 4, leader: 4, betweener: 4, chaser: 4
+      }
+  };
 
-  const fName = FIRST_NAMES[randomInt(0, FIRST_NAMES.length - 1)];
-  const lName = LAST_NAMES[randomInt(0, LAST_NAMES.length - 1)];
+  const strats = ['runner', 'leader', 'betweener', 'chaser'] as const;
+  aptitudes.strategy[strats[Math.floor(Math.random() * strats.length)]] = 8; 
+
+  const currentTotal = stats.speed + stats.stamina + stats.power + stats.guts + stats.wisdom;
+  const currentOvr = Math.floor(currentTotal / 50) + 10;
+  const potential = Math.min(99, currentOvr + Math.floor(Math.random() * 8) + 2);
 
   return {
-    id: crypto.randomUUID(),
-    firstName: fName,
-    lastName: lName,
-    // @ts-ignore
-    color: '#333', 
-    condition: 100, 
-    teamId: 'free_agent', 
-    age: 3, 
-    status: 'active',
-    skills: innateSkills,
-    trophies: inheritedTrophies,
-    
-    // PROPERTIES
-    energy: 100,      
-    fatigue: 0,       
-    injuryWeeks: 0,   
-
-    career: { races: 0, wins: 0, top3: 0, earnings: 0 },
-    history: [],
-    stats: {
-      speed: speed + bonusSpeed,
-      stamina: stamina + bonusStamina,
-      power: power + bonusPower,
-      guts: guts,
-      wisdom: wisdom,
-    },
-    aptitude
+      id,
+      firstName: names.first,
+      lastName: names.last,
+      teamId: 'free_agent', // Default, but generateUma will overwrite this
+      color: '#333',
+      age: 3, 
+      energy: 100,
+      fatigue: 0,
+      injuryWeeks: 0,
+      potential: potential,
+      status: 'active',
+      condition: 100,
+      trophies: [],
+      skills: getRandomSkills(tier === 1 ? (Math.random() > 0.5 ? 2 : 1) : (Math.random() > 0.8 ? 1 : 0)),
+      career: { races: 0, wins: 0, top3: 0, earnings: 0 },
+      history: [],
+      stats: stats,
+      currentOvr,
+      // @ts-ignore
+      aptitude: aptitudes
   };
-}
+};
 
 export function generateRival(teamId: string, minStat: number): Uma {
-  const rival = generateUma();
-  rival.teamId = teamId; 
-  const base = Math.max(minStat, 400); 
-  rival.stats = {
-    speed: base + Math.random() * 80,
-    stamina: base + Math.random() * 80,
-    power: base + Math.random() * 80,
-    guts: base + Math.random() * 80,
-    wisdom: base + Math.random() * 80,
-  };
-  return rival;
+    const uma = generateTieredUma(1);
+    uma.teamId = teamId;
+    return uma;
+}
+
+// --- REAL INHERITANCE SYSTEM ---
+export function generateUma(parent?: Uma): Uma {
+    // 1. If no parent, return standard rookie (Tier 2)
+    if (!parent) {
+        const uma = generateTieredUma(2);
+        uma.teamId = 'player'; // Ensure they join the player
+        return uma;
+    }
+
+    // 2. PARENT ANALYSIS
+    // Determine parent's best stat to decide Child's Archetype
+    const pStats = parent.stats;
+    const highestStat = Object.keys(pStats).reduce((a, b) => 
+        pStats[a as keyof typeof pStats] > pStats[b as keyof typeof pStats] ? a : b
+    );
+
+    let childArchetype = 'Classic';
+    if (highestStat === 'speed') childArchetype = 'Sprinter';
+    else if (highestStat === 'stamina') childArchetype = 'Stayer';
+    else if (highestStat === 'power') childArchetype = 'Dirt';
+    else if (highestStat === 'guts') childArchetype = 'Miler';
+
+    // 3. GENERATE CHILD
+    const child = generateTieredUma(2, childArchetype);
+    
+    // 4. APPLY INHERITANCE BONUSES
+    // Bonus: +10% of parent's current stats (gives a huge head start)
+    child.stats.speed += Math.floor(parent.stats.speed * 0.1);
+    child.stats.stamina += Math.floor(parent.stats.stamina * 0.1);
+    child.stats.power += Math.floor(parent.stats.power * 0.1);
+    child.stats.guts += Math.floor(parent.stats.guts * 0.1);
+    child.stats.wisdom += Math.floor(parent.stats.wisdom * 0.1);
+
+    // 5. INHERIT APTITUDES
+    // If parent was an 'S' rank in something, child gets at least an 'A'
+    if (parent.aptitude.surface.dirt > 6) child.aptitude.surface.dirt = 8;
+    if (parent.aptitude.distance.long > 6) child.aptitude.distance.long = 8;
+    if (parent.aptitude.distance.short > 6) child.aptitude.distance.short = 8;
+
+    // 6. INHERIT SKILL
+    // 50% chance to inherit a random skill from parent
+    if (parent.skills.length > 0 && Math.random() > 0.5) {
+        const skillToInherit = parent.skills[Math.floor(Math.random() * parent.skills.length)];
+        // Avoid duplicates
+        if (!child.skills.some(s => s.id === skillToInherit.id)) {
+            child.skills.push(skillToInherit);
+        }
+    }
+
+    child.teamId = 'player';
+    return child;
 }

@@ -1,4 +1,3 @@
-// src/pages/CreateUmaPage.tsx
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../db';
@@ -25,11 +24,28 @@ export function CreateUmaPage() {
     strategy: { runner: 1, leader: 8, betweener: 8, chaser: 1 }
   });
 
-  // SKILL SELECTION
-  const [selectedSkillId, setSelectedSkillId] = useState<string>("");
+  // SKILL SELECTION (Now an Array)
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+
+  // Toggle Logic
+  const toggleSkill = (id: string) => {
+      if (selectedSkillIds.includes(id)) {
+          setSelectedSkillIds(prev => prev.filter(sid => sid !== id));
+      } else {
+          setSelectedSkillIds(prev => [...prev, id]);
+      }
+  };
 
   const handleSave = async () => {
     if (!firstName || !lastName) return alert("Name is required!");
+
+    const currentTotal = stats.speed + stats.stamina + stats.power + stats.guts + stats.wisdom;
+    
+    // CALCULATE OVR
+    const currentOvr = Math.floor(currentTotal / 50) + 10;
+
+    // CALCULATE POTENTIAL
+    const calculatedPotential = Math.floor(currentTotal / 50) + 25; 
 
     const newUma: Uma = {
         id: crypto.randomUUID(),
@@ -41,27 +57,28 @@ export function CreateUmaPage() {
         status: 'active',
         stats,
         aptitude,
-        skills: selectedSkillId ? [SKILL_DATABASE.find(s => s.id === selectedSkillId)!] : [],
+        // --- FIX: Map ALL selected IDs to Skill Objects ---
+        skills: SKILL_DATABASE.filter(s => selectedSkillIds.includes(s.id)),
         
-        // --- ADDED MISSING PROPERTIES ---
-        condition: 100,    // Good Motivation
-        energy: 100,       // Full Energy
-        fatigue: 0,        // Zero Fatigue
-        injuryWeeks: 0,    // Healthy
-        // --------------------------------
+        currentOvr: currentOvr, 
+        condition: 100,    
+        energy: 100,       
+        fatigue: 0,        
+        injuryWeeks: 0,    
+        potential: calculatedPotential, 
 
         career: { races: 0, wins: 0, top3: 0, earnings: 0 },
         history: [],
         trophies: [],
-        teamId: 'player' // Auto-assign to your stable
+        teamId: 'player' 
     };
 
     await db.umas.add(newUma);
-    navigate('/'); // Redirect to Dashboard
+    navigate('/'); 
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+    <div style={{ padding: '20px', maxWidth: '900px', margin: '0 auto' }}>
       <h1 style={{ borderBottom: '4px solid #333', paddingBottom: '10px', color: '#ecf0f1' }}>🧬 Genetic Lab (God Mode)</h1>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -89,17 +106,50 @@ export function CreateUmaPage() {
             </div>
           ))}
 
-           <h3 style={{color: '#9b59b6'}}>Starting Skill</h3>
-           <select 
-             value={selectedSkillId}
-             onChange={(e) => setSelectedSkillId(e.target.value)}
-             style={{ width: '100%', padding: '8px', fontSize: '14px', backgroundColor: '#333', color: 'white', border: '1px solid #555' }}
-           >
-             <option value="">(None)</option>
-             {SKILL_DATABASE.map(s => (
-               <option key={s.id} value={s.id}>{s.name} ({s.type})</option>
-             ))}
-           </select>
+           {/* --- NEW MULTI-SELECT SKILL UI --- */}
+           <h3 style={{color: '#9b59b6'}}>Skills ({selectedSkillIds.length} Selected)</h3>
+           <div style={{ 
+               maxHeight: '250px', 
+               overflowY: 'auto', 
+               backgroundColor: '#252525', 
+               border: '1px solid #444', 
+               padding: '10px',
+               borderRadius: '4px'
+           }}>
+             {SKILL_DATABASE.map(s => {
+                 const isSelected = selectedSkillIds.includes(s.id);
+                 return (
+                    <div 
+                        key={s.id} 
+                        onClick={() => toggleSkill(s.id)}
+                        style={{ 
+                            marginBottom: '8px', 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            backgroundColor: isSelected ? 'rgba(155, 89, 182, 0.2)' : 'transparent',
+                            padding: '4px',
+                            borderRadius: '4px'
+                        }}
+                    >
+                        <input 
+                            type="checkbox" 
+                            checked={isSelected} 
+                            readOnly 
+                            style={{ marginRight: '10px', cursor: 'pointer' }} 
+                        />
+                        <div>
+                            <div style={{ color: isSelected ? '#fff' : '#ccc', fontWeight: isSelected ? 'bold' : 'normal' }}>
+                                {s.name}
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#7f8c8d' }}>
+                                {s.type} • {s.description} 
+                            </div>
+                        </div>
+                    </div>
+                 );
+             })}
+           </div>
         </div>
 
         {/* RIGHT COL: APTITUDES */}

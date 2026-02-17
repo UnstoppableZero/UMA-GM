@@ -1,17 +1,16 @@
 // src/types.ts
 import type { Skill } from './skills'; 
 
-// --- NEW: TEAM DEFINITION ---
+// --- TEAM DEFINITION ---
 export interface Team {
-  id: string;        // e.g. "spica", "rigil"
-  name: string;      // "Team Spica"
-  shortName: string; // "SPC"
-  color: string;     // Hex code for UI
-  logo: string;      // Emoji or Image URL
-  prestige: number;  // 0-100 (Affects recruiting/budget)
-  desc: string;      // Flavor text
+  id: string;        
+  name: string;      
+  shortName: string; 
+  color: string;     
+  logo: string;      
+  prestige: number;  
+  desc: string;      
   
-  // Team History
   history: {
     wins: number;
     championships: number;
@@ -19,7 +18,7 @@ export interface Team {
   };
 }
 
-// --- UPDATED: UMA DEFINITION ---
+// --- RACE RECORD ---
 export interface RaceRecord {
   year: number;
   week: number;
@@ -28,28 +27,33 @@ export interface RaceRecord {
   time: number;
 }
 
+// --- UMA DEFINITION ---
 export interface Uma {
   id: string;
   firstName: string;
   lastName: string;
   
-  // LINK TO TEAM
-  teamId: string;   // <--- CHANGED: Was 'team', now links to Team.id
+  teamId: string;   
 
-  color?: string;   // Jersey/Image color
+  color?: string;   
   age: number;
-  energy: number; // 0 to 100
-fatigue: number; // 0 to 100 (Higher = more injury risk)
-injuryWeeks: number; // Weeks remaining until recovered (0 = healthy)
+  energy: number; 
+  fatigue: number; 
+  injuryWeeks: number; 
   
-  // NEW STATUS FIELDS
-  status: 'active' | 'retired' | 'injured'; // <--- Added 'injured'
-  condition: number; // 0-100 (100 = Perfect, <30 = Risk of Injury)
+  potential: number; 
+  currentOvr: number; 
+  
+  // --- ADDED THIS PROPERTY TO FIX THE ERROR ---
+  targetRace?: string; 
+  // -------------------------------------------
+
+  status: 'active' | 'retired' | 'injured'; 
+  condition: number; 
 
   trophies: string[];
   skills: Skill[];
 
-  // CAREER STATS
   career: {
     races: number;
     wins: number;
@@ -57,10 +61,8 @@ injuryWeeks: number; // Weeks remaining until recovered (0 = healthy)
     earnings: number;
   };
 
-  // RACE HISTORY LOG
   history: RaceRecord[];
 
-  // ATTRIBUTES
   stats: { 
     speed: number; 
     stamina: number; 
