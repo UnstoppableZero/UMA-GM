@@ -1,3 +1,4 @@
+// src/logic/race.ts
 import type { Uma } from './types';
 import { getCommentary } from './commentary'; 
 
@@ -20,23 +21,14 @@ export interface RaceOutcome {
 
 // SIMULATION CONSTANTS
 const FRAME_RATE = 10; 
-
-// --- PHYSICS TUNING v14 (THE "INVISIBLE RAIL") ---
-// We force everyone to run at this pace for 70% of the race.
-// 16.5 m/s = ~2:25.0 for 2400m (Realistic G1 Pace)
 const RACE_PACE = 16.5; 
-
-// The maximum extra speed a 1200 Speed/Power horse can generate in the final sprint.
-// +1.5 m/s means top speed is 18.0 m/s. 
-// A 400 stat horse gets +0.5 m/s (17.0 m/s).
-// gap over final 600m = ~2.0 seconds. PERFECT.
 const MAX_SPRINT_BONUS = 1.5;
 
-const SKILL_BONUS = 3.5; 
-const STAMINA_DRAIN_RATE = 0.40; 
-const DRAFTING_BONUS = 0.90; 
+// --- PHYSICS TUNING v15 (THE "BONK" UPDATE) ---
+const STAMINA_DRAIN_RATE = 0.60; 
+const LEADER_WIND_DRAG = 1.25;   // MASSIVE NERF: Leader burns 25% MORE stamina
+const DRAFTING_BONUS = 0.90;     // Drafters burn 10% LESS
 
-// Helper to determine natural strategy
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
     const s = apt.strategy;
     if (s.runner >= s.leader && s.runner >= s.betweener && s.runner >= s.chaser) return 'runner';
@@ -49,25 +41,19 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
   
   // 1. Setup
   let racers = field.map(uma => {
-    // Initial Stamina Setup
     const stamina = uma.stats.stamina;
-
-    // Use Natural Aptitude for Strategy
     // @ts-ignore
     const strategy = getBestStrategy(uma.aptitude);
 
-    // Ultimate Trigger Calculation
     let baseTriggerDist = distance - 600; 
     if (distance <= 1400) baseTriggerDist = distance - 400; 
     
-    // Strategy offsets for ult trigger
     let stratOffset = 0;
     if (strategy === 'runner') stratOffset = -150;     
     else if (strategy === 'leader') stratOffset = -50; 
     else if (strategy === 'betweener') stratOffset = 100; 
     else if (strategy === 'chaser') stratOffset = 300; 
 
-    // Tiny noise
     const randomNoise = (Math.random() * 30) - 15;
 
     let skillTriggerMeters = baseTriggerDist + stratOffset + randomNoise;
@@ -86,7 +72,9 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       skillTriggered: false,
       skillTriggerMeters, 
       isSpurting: false,
-      stats: uma.stats
+      stats: uma.stats,
+      isDrafting: false,
+      isLeading: false
     };
   });
 
@@ -98,20 +86,19 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
   let leaderId = "";
   let leaderDist = 0;
 
-  // Initial Log
   tempLogs.push({ message: getCommentary('start'), time: 0.1 });
 
   // 2. Main Loop
   while (finishedCount < racers.length) {
     time += (1 / FRAME_RATE);
-    if (time > 600) break; // Safety break
+    if (time > 600) break; 
 
-    // Sort to find Leader
     const currentStandings = [...racers].sort((a, b) => b.currentDist - a.currentDist);
     const leader = currentStandings[0];
     leaderDist = leader.currentDist;
     
-    // Commentary Triggers
+    racers.forEach(r => r.isLeading = (r.uma.id === leader.uma.id));
+
     if (time % 2 < 0.1 && leader.uma.id !== leaderId && leader.currentDist > 50) {
         leaderId = leader.uma.id;
         if (leader.currentDist < distance - 200) {
@@ -140,68 +127,58 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
 
       const progress = r.currentDist / distance;
       let targetSpeed = 0;
-      let isDrafting = false;
+      r.isDrafting = false; 
 
       // ==========================================================
       // PHASE 1: THE INVISIBLE RAIL (0% - 70%)
       // ==========================================================
-      // Everyone is locked to RACE_PACE. 
-      // Speed stats are IGNORED here to prevent blowouts.
       if (progress < 0.70) {
           
           // 1. Establish Position Target relative to Leader
+          // NERF: Tightened gaps. Chasers are now closer to the front.
           let targetGap = 0;
-          if (r.strategy === 'runner') targetGap = 0;       // Front
-          else if (r.strategy === 'leader') targetGap = 4;   // 4m back (approx 1.5 lengths)
-          else if (r.strategy === 'betweener') targetGap = 8; // 8m back
-          else if (r.strategy === 'chaser') targetGap = 12;  // 12m back (approx 5 lengths)
+          if (r.strategy === 'runner') targetGap = 0;       
+          else if (r.strategy === 'leader') targetGap = 3;   // Was 4
+          else if (r.strategy === 'betweener') targetGap = 6; // Was 8
+          else if (r.strategy === 'chaser') targetGap = 10;  // Was 12
           
           const myGap = leaderDist - r.currentDist;
           const gapDelta = myGap - targetGap;
 
-          // 2. Base Speed is strict RACE_PACE
+          // 2. Base Speed
           targetSpeed = RACE_PACE;
 
-          // 3. Rubber Band Physics (The "Glue")
+          // 3. Rubber Band Physics
           if (gapDelta > 2) { 
-             // We are falling behind our assigned slot -> Speed Up
              targetSpeed *= 1.04; 
-             isDrafting = true;
+             if (myGap < 5 && !r.isLeading) r.isDrafting = true;
           } else if (gapDelta < -1) {
-             // We are ahead of our assigned slot -> Slow Down
-             // (Unless we are the actual leader)
-             if (r.uma.id !== leader.uma.id) {
+             if (!r.isLeading) {
                  targetSpeed *= 0.96;
              }
           }
 
-          // Runner Logic: Slightly faster bias to ensure they are the ones setting 'leaderDist'
-          if (r.strategy === 'runner') {
-              targetSpeed += 0.1;
-          }
+          // NERF: Removed the flat +0.1 speed bonus for Runners. 
+          // They no longer get "Free Speed" just for existing.
       } 
       
       // ==========================================================
       // PHASE 2: THE RELEASE (70% - 100%)
       // ==========================================================
-      // The Rail is gone. Stats decide the winner now.
       else {
           const distRemaining = distance - r.currentDist;
           
-          // 1. Calculate Max Potential Speed based on Stats
-          // Formula: Base + (Speed/1200 * Bonus) + (Power/1200 * Bonus)
           const speedBonus = (r.stats.speed / 1200) * (MAX_SPRINT_BONUS * 0.7);
           const powerBonus = (r.stats.power / 1200) * (MAX_SPRINT_BONUS * 0.3);
           
           targetSpeed = RACE_PACE + speedBonus + powerBonus;
 
-          // 2. Check Stamina for Sprint
-          const sprintCostPerMeter = 0.6; // Lowered cost
+          const sprintCostPerMeter = 0.6; 
           const canSprint = r.currentStamina > (distRemaining * sprintCostPerMeter);
 
           let spurtThreshold = 0.70; 
-          if (r.stats.stamina > 600) spurtThreshold = 0.65; // Early burst
-          if (r.stats.stamina < 450) spurtThreshold = 0.75; // Late burst
+          if (r.stats.stamina > 600) spurtThreshold = 0.65; 
+          if (r.stats.stamina < 450) spurtThreshold = 0.75; 
 
           if (progress > spurtThreshold && canSprint) {
              r.isSpurting = true;
@@ -210,43 +187,64 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
           }
 
           if (r.isSpurting) {
-             // Burst Speed
-             targetSpeed += 0.5; // Flat burst bonus
+             targetSpeed += 0.5; 
              
-             // Strategy Closing Speed
-             if (r.strategy === 'chaser') targetSpeed += 0.3; 
-             else if (r.strategy === 'betweener') targetSpeed += 0.15;
+             // BUFF: Chasers get stronger "Rubber Band Snap" speed
+             if (r.strategy === 'chaser') targetSpeed += 0.60; // Was 0.45
+             else if (r.strategy === 'betweener') targetSpeed += 0.35; // Was 0.25
              
              r.currentStamina -= 1.0; 
           }
       }
 
       // ==========================================================
-      // MODIFIERS
+      // MODIFIERS & STAMINA LOGIC
       // ==========================================================
 
-      // Soft Wall (Stamina Depletion)
-      // If empty, cap speed at 95% of Race Pace. No walking.
+      const distMod = distance > 2400 ? 0.8 : 1.0;
+      let drain = STAMINA_DRAIN_RATE * distMod * (1 / FRAME_RATE);
+      
+      if (r.isSpurting) drain *= 1.5; 
+
+      if (r.isLeading) {
+          drain *= LEADER_WIND_DRAG; // 25% EXTRA DRAIN for Leader
+      } else if (r.isDrafting) {
+          drain *= DRAFTING_BONUS;   
+      }
+      
+      r.currentStamina -= drain;
+
+      // --- THE "BONK" (CATASTROPHIC FAILURE) ---
+      // If a Runner runs out of stamina, they hit a brick wall.
       if (r.currentStamina <= 0) {
            r.currentStamina = 0;
-           targetSpeed = Math.min(targetSpeed, RACE_PACE * 0.95);
+           
+           // MASSIVE NERF: Speed drops to 60% of Pace (Walking Speed)
+           // Previously was 90%. This ensures they get overtaken instantly.
+           targetSpeed = Math.min(targetSpeed, RACE_PACE * 0.60); 
+           
            r.isSpurting = false;
+           
+           // Optional: Log the collapse if leading
+           if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("collapses"))) {
+               tempLogs.push({ message: `🛑 ${r.uma.lastName} hits the wall!`, time: time });
+           }
       }
 
-      // Ultimate Skill
       if (!r.skillTriggered && r.currentDist >= r.skillTriggerMeters && r.currentStamina > 50) {
          const chance = 0.70 + (r.stats.wisdom / 4000); 
          if (Math.random() < chance) {
              r.skillTriggered = true;
+             if (!tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("Ultimate"))) {
+                 tempLogs.push({ message: `⚡ ${r.uma.lastName} activates Ultimate!`, time: time });
+             }
          }
       }
 
       if (r.skillTriggered) {
-          // Skill adds flat m/s
           targetSpeed += 0.8;
       }
 
-      // Acceleration Smoothing
       const acceleration = (r.stats.power / 200) * (1 / FRAME_RATE); 
       if (r.currentSpeed < targetSpeed) {
          r.currentSpeed = Math.min(targetSpeed, r.currentSpeed + acceleration);
@@ -256,22 +254,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
 
       r.currentDist += r.currentSpeed * (1 / FRAME_RATE);
       
-      // Stamina Drain
-      const distMod = distance > 2400 ? 0.8 : 1.0;
-      let drain = STAMINA_DRAIN_RATE * distMod * (1 / FRAME_RATE);
-      if (r.isSpurting) drain *= 1.5; // Sprinting burns more
-      if (isDrafting) drain *= DRAFTING_BONUS;
-
-      r.currentStamina -= drain;
-
-      // Log Ultimate
-      if (r.skillTriggered && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("Ultimate"))) {
-          tempLogs.push({ 
-             message: `⚡ ${r.uma.lastName} activates Ultimate!`, 
-             time: time 
-          });
-      }
-
       if (r.currentDist >= distance) {
         r.finished = true;
         r.finishTime = time;
@@ -280,7 +262,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
     });
   }
 
-  // 3. Finalize
   racers.sort((a, b) => a.finishTime - b.finishTime);
 
   const results = racers.map((r, i) => ({
@@ -297,15 +278,8 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       timePct: l.time / raceEndTime
   }));
 
-  finalLog.unshift({ 
-      message: getCommentary('start'), 
-      timePct: 0.0 
-  });
-  
-  finalLog.push({ 
-      message: getCommentary('winnerAnnouncement', { winner: results[0].uma.lastName }), 
-      timePct: 1.0 
-  });
+  finalLog.unshift({ message: getCommentary('start'), timePct: 0.0 });
+  finalLog.push({ message: getCommentary('winnerAnnouncement', { winner: results[0].uma.lastName }), timePct: 1.0 });
 
   return { results, log: finalLog };
 };
