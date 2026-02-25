@@ -31,9 +31,13 @@ export function Sidebar() {
         {/* LEAGUE & WORLD */}
         <div style={{ ...sectionTitle, marginTop: '20px' }}>LEAGUE</div>
         <NavLink to="/league" label="Standings" icon="🏆" active={location.pathname === '/league'} />
-        {/* NEW LEAGUE ROSTER LINK */}
+        
+        {/* NEW AWARDS RACE LINK */}
+        <NavLink to="/awards" label="Awards Race" icon="🏅" active={location.pathname === '/awards'} />
+        
         <NavLink to="/league-roster" label="League Roster" icon="👥" active={location.pathname === '/league-roster'} />
         <NavLink to="/calendar" label="Schedule" icon="📅" active={location.pathname === '/calendar'} />
+        
         <NavLink to="/history" label="History" icon="🏛️" active={location.pathname === '/history'} />
         <NavLink to="/hof" label="Hall of Fame" icon="🌟" active={location.pathname === '/hof'} />
 
@@ -41,7 +45,6 @@ export function Sidebar() {
         <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid #34495e', display: 'flex', flexDirection: 'column', gap: '5px' }}>
            <NavLink to="/settings" label="Settings" icon="⚙️" active={location.pathname === '/settings'} />
            
-           {/* NEW DEV TOOLS LINK */}
            <NavLink to="/devtools" label="Dev Tools" icon="🛠️" active={location.pathname === '/devtools'} />
         </div>
 

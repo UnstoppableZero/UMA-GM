@@ -28,9 +28,17 @@ export function EditUmaPage() {
   // APTITUDES
   const [aptitude, setAptitude] = useState(DEFAULT_APTITUDE);
 
-  // SKILLS (Now supports 2 slots)
-  const [skill1, setSkill1] = useState<string>("");
-  const [skill2, setSkill2] = useState<string>("");
+  // SKILL SELECTION (Now an Array)
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+
+  // Toggle Logic
+  const toggleSkill = (skillId: string) => {
+      if (selectedSkillIds.includes(skillId)) {
+          setSelectedSkillIds(prev => prev.filter(sid => sid !== skillId));
+      } else {
+          setSelectedSkillIds(prev => [...prev, skillId]);
+      }
+  };
 
   // LOAD DATA ON MOUNT
   useEffect(() => {
@@ -57,10 +65,9 @@ export function EditUmaPage() {
           strategy: { ...DEFAULT_APTITUDE.strategy, ...(uma.aptitude?.strategy || {}) }
       });
       
-      // LOAD SKILLS INTO SLOTS
+      // LOAD SKILLS INTO MULTI-SELECT
       if (uma.skills && uma.skills.length > 0) {
-        setSkill1(uma.skills[0]?.id || "");
-        setSkill2(uma.skills[1]?.id || "");
+        setSelectedSkillIds(uma.skills.map(s => s.id));
       }
       
       setLoading(false);
@@ -72,16 +79,8 @@ export function EditUmaPage() {
     if (!id) return;
     if (!firstName || !lastName) return alert("Name is required!");
 
-    // Combine skills from both slots
-    const newSkills = [];
-    if (skill1) {
-        const s1 = SKILL_DATABASE.find(s => s.id === skill1);
-        if (s1) newSkills.push(s1);
-    }
-    if (skill2) {
-        const s2 = SKILL_DATABASE.find(s => s.id === skill2);
-        if (s2) newSkills.push(s2);
-    }
+    // Map ALL selected IDs to Skill Objects
+    const newSkills = SKILL_DATABASE.filter(s => selectedSkillIds.includes(s.id));
 
     await db.umas.update(id, {
       firstName,
@@ -93,6 +92,7 @@ export function EditUmaPage() {
       skills: newSkills
     });
 
+    // FIXED: Routes back to /uma/
     navigate(`/uma/${id}`); 
   };
 
@@ -127,36 +127,49 @@ export function EditUmaPage() {
             </div>
           ))}
 
-           <h3 style={{color:'#9b59b6'}}>Skills</h3>
-           
-           {/* SKILL SLOT 1 */}
-           <div style={{ marginBottom: '10px' }}>
-             <label style={{display:'block', marginBottom:'5px', fontSize:'12px', color:'#bdc3c7'}}>Skill Slot 1</label>
-             <select 
-               value={skill1}
-               onChange={(e) => setSkill1(e.target.value)}
-               style={{ width: '100%', padding: '8px', fontSize: '14px', backgroundColor: '#333', color: 'white', border: '1px solid #555' }}
-             >
-               <option value="">(Empty)</option>
-               {SKILL_DATABASE.map(s => (
-                 <option key={s.id} value={s.id}>{s.name} ({s.type})</option>
-               ))}
-             </select>
-           </div>
-
-           {/* SKILL SLOT 2 */}
-           <div>
-             <label style={{display:'block', marginBottom:'5px', fontSize:'12px', color:'#bdc3c7'}}>Skill Slot 2</label>
-             <select 
-               value={skill2}
-               onChange={(e) => setSkill2(e.target.value)}
-               style={{ width: '100%', padding: '8px', fontSize: '14px', backgroundColor: '#333', color: 'white', border: '1px solid #555' }}
-             >
-               <option value="">(Empty)</option>
-               {SKILL_DATABASE.map(s => (
-                 <option key={s.id} value={s.id}>{s.name} ({s.type})</option>
-               ))}
-             </select>
+           {/* MULTI-SELECT SKILL UI */}
+           <h3 style={{color:'#9b59b6'}}>Skills ({selectedSkillIds.length} Selected)</h3>
+           <div style={{ 
+               maxHeight: '250px', 
+               overflowY: 'auto', 
+               backgroundColor: '#252525', 
+               border: '1px solid #444', 
+               padding: '10px',
+               borderRadius: '4px'
+           }}>
+             {SKILL_DATABASE.map(s => {
+                 const isSelected = selectedSkillIds.includes(s.id);
+                 return (
+                    <div 
+                        key={s.id} 
+                        onClick={() => toggleSkill(s.id)}
+                        style={{ 
+                            marginBottom: '8px', 
+                            display: 'flex', 
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            backgroundColor: isSelected ? 'rgba(155, 89, 182, 0.2)' : 'transparent',
+                            padding: '4px',
+                            borderRadius: '4px'
+                        }}
+                    >
+                        <input 
+                            type="checkbox" 
+                            checked={isSelected} 
+                            readOnly 
+                            style={{ marginRight: '10px', cursor: 'pointer' }} 
+                        />
+                        <div>
+                            <div style={{ color: isSelected ? '#fff' : '#ccc', fontWeight: isSelected ? 'bold' : 'normal' }}>
+                                {s.name}
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#7f8c8d' }}>
+                                {s.type} • {s.description} 
+                            </div>
+                        </div>
+                    </div>
+                 );
+             })}
            </div>
 
         </div>
@@ -184,6 +197,7 @@ export function EditUmaPage() {
       </div>
 
       <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+        {/* FIXED: Routes back to /uma/ */}
         <button onClick={() => navigate(`/uma/${id}`)} style={{ ...btnStyle, backgroundColor: '#7f8c8d' }}>Cancel</button>
         <button onClick={handleSave} style={{ ...btnStyle, backgroundColor: '#2ecc71' }}>💾 SAVE CHANGES</button>
       </div>

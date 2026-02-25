@@ -67,8 +67,22 @@ export function ProfilePage() {
   const thirds = history.filter(h => h.rank === 3).length;
   const recordString = `${starts} (${wins}-${seconds}-${thirds})`;
 
-  // --- CALCULATE ACHIEVEMENTS ---
+  // --- CALCULATE ACHIEVEMENTS & AWARDS ---
   const achievements = calculateAchievements(history);
+  
+  // Format the saved End-of-Year Trophies
+  const storedTrophies = (uma.trophies || []).map(trophy => {
+      let icon = "🏅";
+      let border = "#2ecc71";
+      
+      if (trophy.includes("Horse of the Year")) { icon = "👑"; border = "#f1c40f"; }
+      else if (trophy.includes("3-Year-Old")) { icon = "🥉"; border = "#e67e22"; }
+      else if (trophy.includes("Older Horse")) { icon = "🌟"; border = "#3498db"; }
+
+      return { label: trophy, icon, color: "#2c3e50", border };
+  });
+
+  const allBadges = [...storedTrophies, ...achievements]; // Trophies first, then derived badges
 
   // --- RADAR CHART MATH ---
   const renderRadarChart = () => {
@@ -181,13 +195,13 @@ export function ProfilePage() {
       </div>
 
       {/* =========================================
-          TROPHY CASE (DYNAMICALLY CALCULATED)
+          TROPHY CASE (DYNAMIC & YEARLY AWARDS)
       ========================================= */}
-      {achievements.length > 0 && (
+      {allBadges.length > 0 && (
         <div style={{ backgroundColor: '#fff3cd', padding: '15px', marginBottom: '20px', borderRadius: '12px', border: '1px solid #ffeeba', textAlign: 'center' }}>
-          <h3 style={{ margin: '0 0 15px 0', color: '#856404' }}>🏆 Major Titles</h3>
+          <h3 style={{ margin: '0 0 15px 0', color: '#856404' }}>🏆 Major Titles & Awards</h3>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
-            {achievements.map((badge, idx) => (
+            {allBadges.map((badge, idx) => (
               <div key={idx} style={{ 
                   display: 'flex', alignItems: 'center', gap: '8px',
                   backgroundColor: 'white', color: '#333', 

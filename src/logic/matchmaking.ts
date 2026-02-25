@@ -1,106 +1,125 @@
 // src/logic/matchmaking.ts
 import type { Uma } from '../types';
 import type { RaceEvent } from '../data/calendar';
-import { shouldAIEnterRace } from './ai';
+import { shouldAIEnterRace, TRIAL_MAP } from './ai'; // NEW IMPORT
 
-/**
- * PUBLIC: Calculates visual rating and odds (Pure Ability)
- * Used for UI display and Odds calculation.
- */
 export const calculateRaceRating = (uma: Uma, race: RaceEvent): number => {
   if (!uma.stats) return 0;
   
-  // Base score from stats
   let score = (uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom);
 
-  // NOTE: REMOVED EARNINGS FROM VISUAL RATING
-  // This prevents the "11,000 Rating" bug.
-
-  // 1. Surface Penalty
   // @ts-ignore
-  const turfApt = uma.aptitude.surface?.turf || 1;
+  const turfApt = uma.aptitude?.surface?.turf || 1;
   // @ts-ignore
-  const dirtApt = uma.aptitude.surface?.dirt || 1;
+  const dirtApt = uma.aptitude?.surface?.dirt || 1;
 
   if (race.surface === 'Turf' && turfApt < 6) score -= (7 - turfApt) * 300;
   if (race.surface === 'Dirt' && dirtApt < 6) score -= (7 - dirtApt) * 300;
 
-  // 2. Distance Penalty
   if (race.distance >= 2400 && uma.stats.stamina < 500) score -= 300;
   if (race.distance <= 1400 && uma.stats.speed < 600) score -= 200;
 
-  // 3. Condition Bonus
   const conditionBonus = (uma.condition || 100) / 100;
   score *= (0.9 + (conditionBonus * 0.1));
 
-  return Math.floor(score);
+  return Math.floor(Math.max(10, score)); 
 };
 
-/**
- * INTERNAL: Calculates who deserves to be in the race.
- * Includes "Class" (Earnings) to prioritize established horses.
- */
-const calculatePriorityScore = (uma: Uma, race: RaceEvent): number => {
+const calculatePriorityScore = (uma: Uma, race: RaceEvent, currentYear: number): number => {
     let ability = calculateRaceRating(uma, race);
-    // Add Earnings Weight (This ensures rich horses get priority entry)
-    // But keeps it hidden from the UI
-    return ability + (uma.career?.earnings || 0) * 0.5;
+    
+    let earningsWeight = race.grade === 'G1' ? 0.2 : 0.1;
+    let score = ability + ((uma.career?.earnings || 0) * earningsWeight);
+
+    if (race.grade === 'G1') {
+        const trialKey = Object.keys(TRIAL_MAP).find(g1 => race.name.includes(g1));
+        if (trialKey) {
+            const qualifiedTrials = TRIAL_MAP[trialKey];
+            const hasGoldenTicket = uma.history?.some(h => 
+                h.year === currentYear && 
+                qualifiedTrials.some(trial => h.raceName.includes(trial)) &&
+                h.rank <= 3 
+            );
+
+            if (hasGoldenTicket) {
+                score += 1000000; 
+            }
+        }
+    }
+    return score;
 };
 
-// Helper for initial sort
-const getTotalStats = (uma: Uma) => 
-  (uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom);
-
-/**
- * SMART ALLOCATION (PRIORITY QUEUE)
- */
 export function autoAllocateHorses(allHorses: Uma[], weeklyRaces: RaceEvent[], currentWeek: number, currentYear: number) {
   const MAX_PER_RACE = 18;
   
   const finalFieldMap: Record<string, { field: Uma[], excluded: Uma[] }> = {};
-  weeklyRaces.forEach(r => finalFieldMap[r.id] = { field: [], excluded: [] });
+  weeklyRaces.forEach(r => {
+      finalFieldMap[r.id] = { field: [], excluded: [] };
+  });
 
-  const sortedRoster = [...allHorses]
-    .filter(u => u.status === 'active' && (u.condition || 100) >= 30)
-    .sort((a, b) => getTotalStats(b) - getTotalStats(a));
+  const activeRoster = allHorses.filter(u => u.status === 'active' && (u.condition || 100) >= 30);
 
-  sortedRoster.forEach(uma => {
-    const options = weeklyRaces
-      .filter(race => shouldAIEnterRace(uma, race, currentWeek, currentYear))
-      .map(race => ({ 
-          race, 
-          // Use Priority Score for sorting "Best Fit"
-          priority: calculatePriorityScore(uma, race) 
-      }))
-      // Filter by raw ability (Rating), not Priority, to ensure competence
-      .filter(opt => calculateRaceRating(uma, opt.race) > 1000) 
-      .sort((a, b) => b.priority - a.priority); 
+  interface RaceApplication {
+      uma: Uma;
+      race: RaceEvent;
+      priority: number;
+  }
+  
+  const allApplications: RaceApplication[] = [];
+  const horseTopChoice: Record<string, string> = {}; 
 
-    if (options.length === 0) return; 
+  activeRoster.forEach(uma => {
+      const validRaces = weeklyRaces.filter(race => shouldAIEnterRace(uma, race, currentWeek, currentYear));
+      
+      if (validRaces.length > 0) {
+          const scoredOptions = validRaces
+              .map(race => ({ race, priority: calculatePriorityScore(uma, race, currentYear) }))
+              .filter(opt => {
+                  if (opt.priority >= 1000000) return true; // Golden Tickets bypass floor
+                  
+                  const rating = calculateRaceRating(uma, opt.race);
+                  // FIX: Lowered G1 floor to 2200 and G2 to 1800 so fields fill out!
+                  if (opt.race.grade === 'G1') return rating >= 2200;
+                  if (opt.race.grade === 'G2') return rating >= 1800;
+                  return rating >= 1400;
+              })
+              .sort((a, b) => b.priority - a.priority);
 
-    let placed = false;
-    for (const option of options) {
-      const raceId = option.race.id;
-      if (finalFieldMap[raceId].field.length < MAX_PER_RACE) {
-        finalFieldMap[raceId].field.push(uma);
-        placed = true;
-        break; 
+          if (scoredOptions.length > 0) {
+              horseTopChoice[uma.id] = scoredOptions[0].race.id; 
+              
+              scoredOptions.forEach(opt => {
+                  allApplications.push({ uma, race: opt.race, priority: opt.priority });
+              });
+          }
       }
-    }
+  });
 
-    if (!placed) {
-      const favoriteRaceId = options[0].race.id;
-      finalFieldMap[favoriteRaceId].excluded.push(uma);
-    }
+  allApplications.sort((a, b) => b.priority - a.priority);
+
+  const assignedHorses = new Set<string>();
+
+  allApplications.forEach(app => {
+      if (assignedHorses.has(app.uma.id)) return;
+      if (finalFieldMap[app.race.id].field.length >= MAX_PER_RACE) return;
+
+      finalFieldMap[app.race.id].field.push(app.uma);
+      assignedHorses.add(app.uma.id);
+  });
+
+  activeRoster.forEach(uma => {
+      const topChoiceId = horseTopChoice[uma.id];
+      if (topChoiceId && !assignedHorses.has(uma.id)) {
+          finalFieldMap[topChoiceId].excluded.push(uma);
+      }
   });
 
   return finalFieldMap;
 }
 
-export function createOfficialField(entrants: Uma[], race: RaceEvent): { field: Uma[], excluded: Uma[] } {
+export function createOfficialField(entrants: Uma[], race: RaceEvent, currentYear: number): { field: Uma[], excluded: Uma[] } {
   const MAX_PER_RACE = 18;
-  // Sort by Priority Score to cut the field
-  const sortedEntrants = [...entrants].sort((a, b) => calculatePriorityScore(b, race) - calculatePriorityScore(a, race));
+  const sortedEntrants = [...entrants].sort((a, b) => calculatePriorityScore(b, race, currentYear) - calculatePriorityScore(a, race, currentYear));
   
   return { 
     field: sortedEntrants.slice(0, MAX_PER_RACE), 

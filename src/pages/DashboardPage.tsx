@@ -9,7 +9,7 @@ import { generateTieredUma } from '../generator';
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
 import { autoAllocateHorses, calculateOdds, calculateRaceRating } from '../logic/matchmaking'; 
-import { replenishRosters, processWeeklyAIGrowth } from '../logic/season';
+import { replenishRosters, processWeeklyAIGrowth, assignEndOfYearAwards } from '../logic/season'; // <-- Added assignEndOfYearAwards
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -136,23 +136,15 @@ export function DashboardPage() {
             if (umaIndex === -1) continue;
             const uma = roster[umaIndex];
 
-            // --- RACE XP (G1 TUNED) ---
-            // Winners get strong boosts (especially G1s) to reach potential before age 5/6.
-            // But we respect the Potential Cap so they don't become 99 OVR gods instantly.
-            
             const currentTotal = uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom;
             const currentRating = Math.floor(currentTotal / 50) + 10;
 
-            // Only gain XP if below potential
             if (uma.potential && currentRating < uma.potential) {
-                let xpGain = 1; // Base participation
+                let xpGain = 1; 
                 
-                if (res.rank === 1) xpGain = 4;      // Winner (Standard Race)
-                else if (res.rank === 2) xpGain = 2; // Runner-up
+                if (res.rank === 1) xpGain = 4;      
+                else if (res.rank === 2) xpGain = 2; 
                 
-                // G1 Multiplier:
-                // Winner = 4 + 6 = +10 All Stats.
-                // 2nd Place = 2 + 6 = +8 All Stats.
                 if (race.grade === 'G1') xpGain += 6; 
                 
                 uma.stats.speed = Math.min(1200, uma.stats.speed + xpGain);
@@ -161,7 +153,6 @@ export function DashboardPage() {
                 uma.stats.guts = Math.min(1200, uma.stats.guts + xpGain);
                 uma.stats.wisdom = Math.min(1200, uma.stats.wisdom + xpGain);
             }
-            // ---------------------------
 
             const injuryRisk = 0.01 + Math.max(0, ((uma.fatigue || 0) - 20) * 0.001);
             if (Math.random() < injuryRisk) {
@@ -265,16 +256,26 @@ export function DashboardPage() {
     } else {
         let newWeek = gameState.week + 1;
         let newYear = gameState.year;
+        let finalRoster = [...grewRoster];
         
         if (newWeek > 52) { 
             newWeek = 1; 
             newYear++; 
             setIsSimulating(false);
 
+            // --- END OF YEAR AWARDS (QUICK SIM LOGIC) ---
+            const { updatedRoster, newsData } = assignEndOfYearAwards(finalRoster, gameState.year);
+            finalRoster = updatedRoster;
+            
+            if (newsData.length > 0) {
+                await db.news.bulkAdd(newsData);
+            }
+            // --------------------------------------------
+
             const { checkRetirement } = await import('../logic/ai');
             let retiredCount = 0;
             
-            grewRoster.forEach(u => {
+            finalRoster.forEach(u => {
                 u.age++;
                 if (u.status === 'active' && checkRetirement(u, gameState.year)) {
                     u.status = 'retired';
@@ -282,16 +283,16 @@ export function DashboardPage() {
                 }
             });
 
-            const rookies = replenishRosters(grewRoster);
+            const rookies = replenishRosters(finalRoster);
             if (rookies.length > 0) {
-                grewRoster.push(...rookies);
-                db.news.add({ 
+                finalRoster.push(...rookies);
+                await db.news.add({ 
                     year: newYear, week: 1, 
                     message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
                     type: 'info' 
                 });
             } else {
-                 db.news.add({ 
+                 await db.news.add({ 
                     year: newYear, week: 1, 
                     message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired.`, 
                     type: 'info' 
@@ -299,7 +300,7 @@ export function DashboardPage() {
             }
         }
         
-        await db.umas.bulkPut(grewRoster);
+        await db.umas.bulkPut(finalRoster);
         await db.gameState.update(1, { week: newWeek, year: newYear, money: currentMoney });
     }
   };
@@ -321,9 +322,19 @@ export function DashboardPage() {
               newYear++; 
               setIsSimulating(false);
               
-              import('../logic/season').then(async ({ replenishRosters }) => {
+              import('../logic/season').then(async ({ replenishRosters, assignEndOfYearAwards }) => {
                   import('../logic/ai').then(async ({ checkRetirement }) => {
-                      const currentRoster = await db.umas.toArray();
+                      let currentRoster = await db.umas.toArray();
+                      
+                      // --- END OF YEAR AWARDS (BROADCAST LOGIC) ---
+                      const { updatedRoster, newsData } = assignEndOfYearAwards(currentRoster, gameState.year);
+                      currentRoster = updatedRoster;
+                      
+                      if (newsData.length > 0) {
+                          await db.news.bulkAdd(newsData);
+                      }
+                      // --------------------------------------------
+
                       let retiredCount = 0;
                       
                       currentRoster.forEach(u => {
@@ -337,7 +348,7 @@ export function DashboardPage() {
                       const rookies = replenishRosters(currentRoster);
                       if (rookies.length > 0) currentRoster.push(...rookies);
                       
-                      db.news.add({ 
+                      await db.news.add({ 
                           year: newYear, week: 1, 
                           message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
                           type: 'info' 

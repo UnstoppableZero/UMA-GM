@@ -1,31 +1,47 @@
+// src/logic/ai.ts
 import type { Uma } from '../types';
 import type { RaceEvent } from '../data/calendar';
 
 // JRA REALISM CONSTANTS
 const MAX_STARTS_ELITE_SOFT = 6;  
 const MAX_STARTS_ELITE_HARD = 9;  
-const MAX_STARTS_OPEN = 12;       
+const MAX_STARTS_OPEN = 12;      
 
 // CONFIG: REST WEEKS
 const REST_WEEKS_ELITE = 4; 
 const REST_WEEKS_OPEN = 2;  
 
-// UPDATED G1 LIST
 const G1_NAMES = [
     "February Stakes", "Takamatsunomiya Kinen", "Osaka Hai", "Oka Sho", "Satsuki Sho",
     "Tenno Sho (Spring)", "NHK Mile Cup", "Victoria Mile", "Yushun Himba", "Japanese Oaks",
     "Tokyo Yushun", "Japanese Derby", "Yasuda Kinen", "Takarazuka Kinen", "Sprinters Stakes",
     "Shuka Sho", "Kikuka Sho", "Tenno Sho (Autumn)", "Queen Elizabeth II",
-    "Mile Championship", "Japan Cup", "Champions Cup", "Hanshin JF",
-    "Asahi Hai FS", "Arima Kinen", "Hopeful Stakes"
+    "Mile Championship", "Japan Cup", "Champions Cup", "Arima Kinen"
 ];
 
-// RACES RESTRICTED TO 3-YEAR-OLDS ONLY
-const THREE_YO_CLASSICS = [
+const RESTRICTED_3YO_RACES = [
     "Oka Sho", "Satsuki Sho", "NHK Mile Cup", "Yushun Himba", "Japanese Oaks",
     "Tokyo Yushun", "Japanese Derby", "Shuka Sho", "Kikuka Sho",
-    "Radio Nikkei", "Leopard Stakes", "Unicorn Stakes"
+    "Fairy Stakes", "Shinzan Kinen", "Kisaragi Sho", "Tulip Sho", "Yayoi Sho",
+    "Spring Stakes", "Flora Stakes", "Aoba Sho", "Kyoto Shimbun Hai",
+    "Unicorn Stakes", "Radio Nikkei", "Leopard Stakes", "Shion Stakes",
+    "Rose Stakes", "St. Lite Kinen", "Kobe Shimbun Hai",
+    "Fillies' Revue", "Anemone Stakes", "Wakaba Stakes", "Sweetpea Stakes", "Principal Stakes"
 ];
+
+// EXPORTED SO MATCHMAKING CAN USE IT
+export const TRIAL_MAP: Record<string, string[]> = {
+    "Satsuki Sho": ["Yayoi Sho", "Spring Stakes", "Wakaba Stakes"],
+    "Tokyo Yushun": ["Satsuki Sho", "Aoba Sho", "Kyoto Shimbun Hai", "Principal Stakes"],
+    "Kikuka Sho": ["St. Lite Kinen", "Kobe Shimbun Hai"],
+    "Oka Sho": ["Tulip Sho", "Fairy Stakes", "Fillies' Revue", "Anemone Stakes"],
+    "Yushun Himba": ["Oka Sho", "Flora Stakes", "Sweetpea Stakes"],
+    "Shuka Sho": ["Rose Stakes", "Shion Stakes"],
+    "Tenno Sho (Spring)": ["Hanshin Daishoten", "Nikkei Sho"],
+    "Tenno Sho (Autumn)": ["Mainichi Okan", "All Comers", "Kyoto Daishoten"],
+    "Japan Cup": ["Kyoto Daishoten", "Tenno Sho (Autumn)"],
+    "Arima Kinen": ["Japan Cup", "Kikuka Sho", "Tenno Sho (Autumn)"]
+};
 
 const getDistanceType = (dist: number): 'short' | 'mile' | 'medium' | 'long' => {
   if (dist >= 1000 && dist <= 1400) return 'short';
@@ -36,92 +52,28 @@ const getDistanceType = (dist: number): 'short' | 'mile' | 'medium' | 'long' => 
 };
 
 export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number, currentYear: number): boolean {
-  
-  // 0. GOD MODE OVERRIDE
   if (uma.targetRace === race.name) return true;
-
-  // 1. PHYSICAL CHECK
   if (uma.injuryWeeks > 0) return false;
   
-  // ------------------------------------------------------------------
-  // 2. AGE RESTRICTIONS
-  // ------------------------------------------------------------------
-  const isClassic = THREE_YO_CLASSICS.some(c => race.name.includes(c));
-  if (isClassic && uma.age !== 3) return false;
-  // ------------------------------------------------------------------
+  const is3yoOnly = RESTRICTED_3YO_RACES.some(c => race.name.includes(c));
+  if (is3yoOnly && uma.age !== 3) return false;
   
   const history = uma.history || [];
-  const g1Wins = history.filter(h => 
-      h.rank === 1 && (h.raceName.includes('G1') || G1_NAMES.some(g => h.raceName.includes(g)))
-  ).length;
-  const totalEarnings = uma.career?.earnings || 0;
-  
-  // ------------------------------------------------------------------
-  // 3. PRIORITY EVENTS (TRIPLE CROWN + GRAND PRIX)
-  // ------------------------------------------------------------------
-  let isPriority = false;
 
-  const hasWon = (namePart: string) => history.some(h => h.raceName.includes(namePart) && h.rank === 1);
-  const isElite3YO = uma.age === 3 && (uma.currentOvr || 0) >= 70; // "Elite" threshold
+  // --- NEW: THE GOLDEN TICKET HOLD ---
+  // If the horse won a Trial Race this year, they will REFUSE to enter any G2/G3/Listed races.
+  // They will sit at home and wait exclusively for their G1.
+  const holdsGoldenTicket = Object.keys(TRIAL_MAP).some(g1 => {
+      const trials = TRIAL_MAP[g1];
+      return history.some(h => h.year === currentYear && trials.some(t => h.raceName.includes(t)) && h.rank <= 3);
+  });
 
-  // A. CLASSIC TRIPLE CROWN PATH
-  // Logic: If you are an Elite 3YO, you contest these races. Period.
-  // This ensures the winner has to beat other Elites, not just scrubs.
-  if (race.name.includes('Satsuki Sho') || race.name.includes('Tokyo Yushun') || race.name.includes('Kikuka Sho')) {
-      if (isElite3YO) isPriority = true;
+  if (holdsGoldenTicket && race.grade !== 'G1') {
+      return false; 
   }
+  // ------------------------------------
 
-  // B. FILLIES TRIPLE CROWN PATH
-  if (race.name.includes('Oka Sho') || race.name.includes('Yushun Himba') || race.name.includes('Shuka Sho')) {
-      if (isElite3YO) isPriority = true;
-  }
-
-  // C. THE GRAND PRIX RULE (Japan Cup & Arima Kinen)
-  if (race.name.includes("Japan Cup") || race.name.includes("Arima Kinen")) {
-      const isStar = g1Wins > 0 || totalEarnings > 20000;
-      
-      const distType = getDistanceType(race.distance);
-      // @ts-ignore
-      const aptitude = uma.aptitude?.distance?.[distType] || 1;
-
-      if (isStar && aptitude >= 4) { 
-          isPriority = true;
-      }
-  }
-
-  // --- THE PRIORITY BYPASS ---
-  if (isPriority) {
-      // Lower condition requirement, but not suicidal (was 40, now 50)
-      if ((uma.condition || 100) > 50) return true; 
-  }
-  // ------------------------------------------------------------------
-
-  // ------------------------------------------------------------------
-  // 4. THE "ABSOLUTE CEILING" (NO FARMING)
-  // ------------------------------------------------------------------
-  const totalWins = uma.career?.wins || 0;
-  const isChampion = g1Wins > 0;
-  const isVeteran = totalWins >= 8;
-
-  // RULE A: G3 BAN
-  if (race.grade === 'G3') {
-      if (isChampion) return false; 
-      if (isVeteran) return false;
-      if (totalWins >= 6) return false; 
-  }
-
-  // RULE B: G2 BAN
-  if (race.grade === 'G2') {
-      if (isChampion) return false;
-      if (isVeteran) return false;
-  }
-  // ------------------------------------------------------------------
-
-  // 5. STANDARD CONDITION CHECK
-  const minCondition = race.grade === 'G1' ? 60 : 90;
-  if ((uma.condition || 100) < minCondition) return false;
-
-  // 6. SUITABILITY CHECK
+  // SUITABILITY CHECK
   // @ts-ignore
   const turfApt = uma.aptitude?.surface?.turf || 1;
   // @ts-ignore
@@ -134,10 +86,27 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   // @ts-ignore
   const distApt = uma.aptitude?.distance?.[distType] || 1;
   
-  const minApt = race.grade === 'G1' ? 5 : 4;
+  // FIX: Lowered G1 Aptitude requirement from 5 to 4 so Sprints/Stayers actually fill up!
+  const minApt = race.grade === 'G1' ? 4 : 3;
   if (distApt < minApt) return false;
 
-  // 7. SCHEDULE & REST LOGIC
+  const g1Wins = history.filter(h => 
+      h.rank === 1 && (h.raceName.includes('G1') || G1_NAMES.some(g => h.raceName.includes(g)))
+  ).length;
+  
+  // THE "ABSOLUTE CEILING"
+  const totalWins = uma.career?.wins || 0;
+  const isChampion = g1Wins > 0;
+  const isVeteran = totalWins >= 8;
+
+  if (race.grade === 'G3' && (isChampion || isVeteran || totalWins >= 6)) return false; 
+  if (race.grade === 'G2' && (isChampion || isVeteran)) return false;
+
+  // STANDARD CONDITION CHECK
+  const minCondition = race.grade === 'G1' ? 60 : 90;
+  if ((uma.condition || 100) < minCondition) return false;
+
+  // SCHEDULE & REST LOGIC
   const thisYearRaces = history.filter(h => h.year === currentYear); 
   const lastRace = history[history.length - 1];
   
@@ -149,25 +118,21 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
       if (weeksSince < 0) weeksSince += 52;
       
       let requiredRest = isElite ? REST_WEEKS_ELITE : REST_WEEKS_OPEN;
-      if (race.grade === 'G1') requiredRest = 1;
+
+      // FIX: G1s allow a 3-week turnaround (e.g. W10 Prep -> W13 G1)
+      if (race.grade === 'G1' && weeksSince >= 3) {
+          requiredRest = 3;
+      }
 
       if (weeksSince < requiredRest) return false;
   }
 
-  // 8. CAREER MANAGEMENT (RACE CAPS)
+  // CAREER MANAGEMENT
   if (isElite) {
       const hardCap = race.name.includes('Arima') ? MAX_STARTS_ELITE_HARD + 1 : MAX_STARTS_ELITE_HARD;
-      
       if (thisYearRaces.length >= hardCap) return false;
-
-      if (thisYearRaces.length >= MAX_STARTS_ELITE_SOFT) {
-          if (race.grade !== 'G1') return false;
-      }
-      
-      if (race.grade === 'G3') {
-          if (thisYearRaces.length > 0) return false; 
-      }
-      if (race.grade === 'G1') return true; 
+      if (thisYearRaces.length >= MAX_STARTS_ELITE_SOFT && race.grade !== 'G1') return false;
+      if (race.grade === 'G3' && thisYearRaces.length > 0) return false; 
   } else {
       if (thisYearRaces.length >= MAX_STARTS_OPEN) return false;
   }
@@ -175,7 +140,6 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   return true;
 }
 
-// --- RETIREMENT LOGIC ---
 export function checkRetirement(uma: Uma, currentYear: number): boolean {
     const age = uma.age;
     const totalEarnings = uma.career?.earnings || 0;

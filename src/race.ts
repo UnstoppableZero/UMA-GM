@@ -21,12 +21,12 @@ export interface RaceOutcome {
 
 // SIMULATION CONSTANTS
 const FRAME_RATE = 10; 
-const RACE_PACE = 16.5; 
+const RACE_PACE = 16.2; 
 const MAX_SPRINT_BONUS = 1.5;
 
-// --- PHYSICS TUNING v15 (THE "BONK" UPDATE) ---
+// --- PHYSICS TUNING v16 (THE "PACK COMPRESSION" UPDATE) ---
 const STAMINA_DRAIN_RATE = 0.60; 
-const LEADER_WIND_DRAG = 1.25;   // MASSIVE NERF: Leader burns 25% MORE stamina
+const LEADER_WIND_DRAG = 1.25;   // Leader burns 25% MORE stamina
 const DRAFTING_BONUS = 0.90;     // Drafters burn 10% LESS
 
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
@@ -135,12 +135,13 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       if (progress < 0.70) {
           
           // 1. Establish Position Target relative to Leader
-          // NERF: Tightened gaps. Chasers are now closer to the front.
+          // NERF: Massive Pack Compression.
+          // Runners no longer get a "Safe" 10m lead. The pack hunts closely.
           let targetGap = 0;
           if (r.strategy === 'runner') targetGap = 0;       
-          else if (r.strategy === 'leader') targetGap = 3;   // Was 4
-          else if (r.strategy === 'betweener') targetGap = 6; // Was 8
-          else if (r.strategy === 'chaser') targetGap = 10;  // Was 12
+          else if (r.strategy === 'leader') targetGap = 2;   // Was 3
+          else if (r.strategy === 'betweener') targetGap = 4; // Was 6
+          else if (r.strategy === 'chaser') targetGap = 6;  // Was 10! Chasers are now right on their heels.
           
           const myGap = leaderDist - r.currentDist;
           const gapDelta = myGap - targetGap;
@@ -148,18 +149,15 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
           // 2. Base Speed
           targetSpeed = RACE_PACE;
 
-          // 3. Rubber Band Physics
+          // 3. Rubber Band Physics (Keep the pack tight)
           if (gapDelta > 2) { 
-             targetSpeed *= 1.04; 
+             targetSpeed *= 1.05; // Stronger catch-up in Phase 1
              if (myGap < 5 && !r.isLeading) r.isDrafting = true;
           } else if (gapDelta < -1) {
              if (!r.isLeading) {
                  targetSpeed *= 0.96;
              }
           }
-
-          // NERF: Removed the flat +0.1 speed bonus for Runners. 
-          // They no longer get "Free Speed" just for existing.
       } 
       
       // ==========================================================
@@ -187,11 +185,24 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
           }
 
           if (r.isSpurting) {
-             targetSpeed += 0.5; 
+             targetSpeed += 0.5; // Base Burst
              
-             // BUFF: Chasers get stronger "Rubber Band Snap" speed
-             if (r.strategy === 'chaser') targetSpeed += 0.60; // Was 0.45
-             else if (r.strategy === 'betweener') targetSpeed += 0.35; // Was 0.25
+             // --- STRATEGY SPEED HIERARCHY (THE FIX) ---
+             // Runners are tired. Chasers are fresh.
+             // Chasers now have a HIGHER Top Speed Cap than Runners.
+             if (r.strategy === 'runner') {
+                 // Runners get NO extra strategy bonus. They rely purely on the lead they built.
+                 targetSpeed += 0.0; 
+             }
+             else if (r.strategy === 'leader') {
+                 targetSpeed += 0.15; // Small bonus
+             }
+             else if (r.strategy === 'betweener') {
+                 targetSpeed += 0.45; // Significant bonus
+             }
+             else if (r.strategy === 'chaser') {
+                 targetSpeed += 0.75; // MASSIVE bonus (The Rocket)
+             }
              
              r.currentStamina -= 1.0; 
           }
@@ -215,17 +226,11 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       r.currentStamina -= drain;
 
       // --- THE "BONK" (CATASTROPHIC FAILURE) ---
-      // If a Runner runs out of stamina, they hit a brick wall.
       if (r.currentStamina <= 0) {
            r.currentStamina = 0;
-           
-           // MASSIVE NERF: Speed drops to 60% of Pace (Walking Speed)
-           // Previously was 90%. This ensures they get overtaken instantly.
-           targetSpeed = Math.min(targetSpeed, RACE_PACE * 0.60); 
-           
+           targetSpeed = Math.min(targetSpeed, RACE_PACE * 0.60); // Drop to 60% speed
            r.isSpurting = false;
            
-           // Optional: Log the collapse if leading
            if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("collapses"))) {
                tempLogs.push({ message: `🛑 ${r.uma.lastName} hits the wall!`, time: time });
            }

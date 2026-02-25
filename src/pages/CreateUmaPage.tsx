@@ -44,8 +44,9 @@ export function CreateUmaPage() {
     // CALCULATE OVR
     const currentOvr = Math.floor(currentTotal / 50) + 10;
 
+
     // CALCULATE POTENTIAL
-    const calculatedPotential = Math.floor(currentTotal / 50) + 25; 
+    const calculatedPotential = Math.min(99, currentOvr + Math.floor(Math.random() * 8) + 2);
 
     const newUma: Uma = {
         id: crypto.randomUUID(),

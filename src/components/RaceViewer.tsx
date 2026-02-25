@@ -30,11 +30,18 @@ const getVisualProgress = (pct: number, strategy: string) => {
     return pct;
 };
 
+// Interface for the real-time leaderboard
+interface LiveHorseStatus {
+    id: string;
+    name: string;
+    distanceTraveled: number;
+    color: string;
+}
+
 export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, surface }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   const trackConfig = TRACKS[location] || TRACKS['Tokyo'];
-  // UPDATED: Now utilizes the passed distance prop correctly
   const raceDistance = distance || (outcome as any).raceDistance || 2000;
   const raceSurface = surface || 'Turf';
 
@@ -47,6 +54,9 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
   const [showResults, setShowResults] = useState(false);
   const [currentCommentary, setCurrentCommentary] = useState("");
   const [skillCutIn, setSkillCutIn] = useState<{name: string, text: string} | null>(null);
+
+  // LIVE LEADERBOARD STATE
+  const [liveStandings, setLiveStandings] = useState<LiveHorseStatus[]>([]);
 
   const trackImage = useRef<HTMLImageElement | null>(null);
   useEffect(() => {
@@ -63,7 +73,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     `hsl(${Math.floor(Math.random() * 360)}, 85%, 60%)`
   )).current;
 
-  // UPDATED: Corrected buildRacePath to properly merge chutes and laps
   const buildRacePath = () => {
     const mainLoop = raceSurface === 'Dirt' 
                     ? (trackConfig.dirtLoop || []) 
@@ -78,27 +87,22 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     let path: {x:number, y:number}[] = [];
 
     if (startConf) {
-        // 1. Chute path first
         if (startConf.chute && startConf.chute.length > 0) {
             path.push(...startConf.chute);
         }
 
-        // 2. Initial partial lap to reach the finish line first time
         if (startConf.mergeIndex <= finishIdx) {
             path.push(...mainLoop.slice(startConf.mergeIndex, finishIdx + 1));
         } else {
-            // Wraps around if merge is after finish line index
             path.push(...mainLoop.slice(startConf.mergeIndex));
             path.push(...mainLoop.slice(0, finishIdx + 1));
         }
 
-        // 3. Complete full loops
         for (let i = 0; i < startConf.laps; i++) {
             path.push(...mainLoop.slice(finishIdx + 1));
             path.push(...mainLoop.slice(0, finishIdx + 1));
         }
     } else {
-        // Fallback: Start at finish line and do 1 full loop
         path.push(...mainLoop.slice(finishIdx));
         path.push(...mainLoop.slice(0, finishIdx + 1));
     }
@@ -171,6 +175,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
         }
 
         if (path.length > 0) {
+            const currentStandings: LiveHorseStatus[] = [];
+
             outcome.results.forEach((res, idx) => {
               let rawPct = accumulatedTime / res.time;
               if (rawPct > 1) rawPct = 1;
@@ -178,6 +184,14 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
               const visualPct = getVisualProgress(rawPct, strat);
               const currentDist = visualPct * totalPathLength.current;
               
+              // Push to live standings array
+              currentStandings.push({
+                  id: res.uma.id,
+                  name: res.uma.lastName,
+                  distanceTraveled: currentDist,
+                  color: runnerColors[idx]
+              });
+
               let distTraveled = 0;
               let pos = { x: path[0].x, y: path[0].y };
               let angle = 0;
@@ -242,6 +256,10 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
                   ctx.shadowBlur = 0;
               }
             });
+
+            // Sort standings (Highest distance first) and update state
+            currentStandings.sort((a, b) => b.distanceTraveled - a.distanceTraveled);
+            setLiveStandings(currentStandings);
         }
       }
 
@@ -255,6 +273,10 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
   }, [outcome, imageLoaded, runnerColors, trackConfig]); 
+
+  // Calculate distance remaining for the leader to show on the board
+  const leaderPct = liveStandings.length > 0 ? Math.min(1, liveStandings[0].distanceTraveled / totalPathLength.current) : 0;
+  const metersRemaining = Math.max(0, Math.floor(raceDistance - (raceDistance * leaderPct)));
 
   return (
     <div style={{
@@ -284,11 +306,11 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
       <div style={{ 
         display: 'flex', justifyContent: 'space-between', 
-        width: isTheaterMode ? '98%' : '80%', 
-        maxWidth: '1400px', marginBottom: '15px', alignItems: 'center' 
+        width: isTheaterMode ? '98%' : '90%', 
+        maxWidth: '1600px', marginBottom: '15px', alignItems: 'center' 
       }}>
       <h2 style={{ color: 'white', margin: 0, fontSize: '1.4rem' }}>
-         📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
+          📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
       </h2>
         
         <div style={{ display: 'flex', gap: '15px' }}>
@@ -306,77 +328,118 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       </div>
 
       <div style={{ 
-        position: 'relative', 
-        width: isTheaterMode ? '95vw' : '80vw',
+        display: 'flex', gap: '20px',
+        width: isTheaterMode ? '95vw' : '90vw',
         height: isTheaterMode ? '80vh' : '65vh',
         maxWidth: '1600px',
         maxHeight: '900px',
-        backgroundColor: '#111',
-        border: '4px solid #444',
-        borderRadius: isTheaterMode ? '0px' : '12px',
-        overflow: 'hidden',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
+        transition: 'all 0.3s ease'
       }}>
-        <canvas 
-            ref={canvasRef} 
-            width={800} 
-            height={450} 
-            style={{ 
-              width: '100%', 
-              height: '100%', 
-              objectFit: 'contain',
-              backgroundColor: '#2ecc71'
-            }} 
-        />
         
-        {!showResults && (
-            <div style={{
-                position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
-                width: '70%', backgroundColor: 'rgba(0,0,0,0.85)', padding: '15px 25px', borderRadius: '50px',
-                color: '#fff', fontSize: '1.3rem', textAlign: 'center', border: '2px solid #555',
-                boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
-            }}>
-                🎙️ {currentCommentary || "Waiting for the signal..."}
-            </div>
+        {/* === LIVE LEADERBOARD SIDEBAR === */}
+        {!isTheaterMode && (
+          <div style={{
+              width: '250px', backgroundColor: '#1a1a1a', border: '2px solid #333', 
+              borderRadius: '8px', overflow: 'hidden', display: 'flex', flexDirection: 'column',
+              boxShadow: '0 5px 15px rgba(0,0,0,0.5)'
+          }}>
+              <div style={{ backgroundColor: '#2c3e50', padding: '10px', textAlign: 'center', borderBottom: '2px solid #f39c12' }}>
+                  <div style={{ color: 'white', fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase' }}>Live Order</div>
+                  <div style={{ color: '#f1c40f', fontSize: '20px', fontWeight: '900', fontFamily: 'monospace' }}>
+                      {finished ? "FINISHED" : `${metersRemaining}m`}
+                  </div>
+              </div>
+              
+              <div style={{ flex: 1, overflowY: 'auto', padding: '5px' }}>
+                  {liveStandings.map((horse, i) => (
+                      <div key={horse.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '10px', 
+                          padding: '6px 10px', marginBottom: '2px',
+                          backgroundColor: i === 0 ? 'rgba(241, 196, 15, 0.1)' : 'transparent',
+                          borderBottom: '1px solid #333', borderRadius: '4px'
+                      }}>
+                          <div style={{ 
+                              width: '24px', textAlign: 'center', fontWeight: 'bold', 
+                              color: i === 0 ? '#f1c40f' : (i < 3 ? '#bdc3c7' : '#555'),
+                              fontSize: i === 0 ? '16px' : '14px'
+                          }}>
+                              {i + 1}
+                          </div>
+                          <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: horse.color, border: '1px solid white' }} />
+                          <div style={{ color: i === 0 ? 'white' : '#ccc', fontWeight: i === 0 ? 'bold' : 'normal', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {horse.name}
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
         )}
 
-        {showResults && (
-            <div style={{
-                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', flexDirection: 'column', 
-                alignItems: 'center', justifyContent: 'center', color: 'white', zIndex: 10
-            }}>
-                <h1 style={{ color: '#f1c40f', fontSize: '3rem', marginBottom: '25px', textShadow: '2px 2px #000' }}>🏁 OFFICIAL RESULTS</h1>
-                <div style={{ width: '85%', maxHeight: '65%', overflowY: 'auto', backgroundColor: '#111', padding: '30px', borderRadius: '15px', border: '1px solid #333' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '1.2rem' }}>
-                        <thead style={{ borderBottom: '3px solid #f1c40f', color: '#f1c40f' }}>
-                            <tr>
-                                <th style={{padding: '15px', textAlign: 'left'}}>Rank</th>
-                                <th style={{padding: '15px', textAlign: 'left'}}>Horse</th>
-                                <th style={{padding: '15px', textAlign: 'left'}}>Time</th>
-                                <th style={{padding: '15px', textAlign: 'right'}}>Gap</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {outcome.results.map((res, idx) => (
-                                <tr key={idx} style={{ borderBottom: '1px solid #222', backgroundColor: idx % 2 === 0 ? '#151515' : 'transparent' }}>
-                                    <td style={{padding: '15px', fontWeight: 'bold', color: idx === 0 ? '#f1c40f' : 'white'}}>{idx + 1}</td>
-                                    <td style={{padding: '15px', fontWeight: 'bold'}}>{res.uma.firstName} {res.uma.lastName}</td>
-                                    <td style={{padding: '15px', fontFamily: 'monospace'}}>{res.time.toFixed(2)}s</td>
-                                    <td style={{padding: '15px', textAlign: 'right', color: '#888'}}>{idx === 0 ? 'WINNER' : `+${(res.time - outcome.results[0].time).toFixed(2)}s`}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-                <button onClick={onClose} style={{ marginTop: '35px', padding: '18px 60px', backgroundColor: '#e74c3c', color: 'white', borderRadius: '50px', border: 'none', cursor: 'pointer', fontSize: '1.3rem', fontWeight: 'bold', boxShadow: '0 4px 15px rgba(231, 76, 60, 0.4)' }}>
-                    Return to Stable
-                </button>
-            </div>
-        )}
+        {/* === MAIN CANVAS === */}
+        <div style={{ 
+          flex: 1, position: 'relative', 
+          backgroundColor: '#111', border: '4px solid #444', 
+          borderRadius: isTheaterMode ? '0px' : '8px', overflow: 'hidden', 
+          boxShadow: '0 10px 30px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <canvas 
+              ref={canvasRef} 
+              width={800} 
+              height={450} 
+              style={{ 
+                width: '100%', 
+                height: '100%', 
+                objectFit: 'contain',
+                backgroundColor: '#2ecc71'
+              }} 
+          />
+          
+          {!showResults && (
+              <div style={{
+                  position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
+                  width: '70%', backgroundColor: 'rgba(0,0,0,0.85)', padding: '15px 25px', borderRadius: '50px',
+                  color: '#fff', fontSize: '1.3rem', textAlign: 'center', border: '2px solid #555',
+                  boxShadow: '0 4px 15px rgba(0,0,0,0.3)'
+              }}>
+                  🎙️ {currentCommentary || "Waiting for the signal..."}
+              </div>
+          )}
+
+          {showResults && (
+              <div style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', flexDirection: 'column', 
+                  alignItems: 'center', justifyContent: 'center', color: 'white', zIndex: 10
+              }}>
+                  <h1 style={{ color: '#f1c40f', fontSize: '3rem', marginBottom: '25px', textShadow: '2px 2px #000' }}>🏁 OFFICIAL RESULTS</h1>
+                  <div style={{ width: '85%', maxHeight: '65%', overflowY: 'auto', backgroundColor: '#111', padding: '30px', borderRadius: '15px', border: '1px solid #333' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '1.2rem' }}>
+                          <thead style={{ borderBottom: '3px solid #f1c40f', color: '#f1c40f' }}>
+                              <tr>
+                                  <th style={{padding: '15px', textAlign: 'left'}}>Rank</th>
+                                  <th style={{padding: '15px', textAlign: 'left'}}>Horse</th>
+                                  <th style={{padding: '15px', textAlign: 'left'}}>Time</th>
+                                  <th style={{padding: '15px', textAlign: 'right'}}>Gap</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {outcome.results.map((res, idx) => (
+                                  <tr key={idx} style={{ borderBottom: '1px solid #222', backgroundColor: idx % 2 === 0 ? '#151515' : 'transparent' }}>
+                                      <td style={{padding: '15px', fontWeight: 'bold', color: idx === 0 ? '#f1c40f' : 'white'}}>{idx + 1}</td>
+                                      <td style={{padding: '15px', fontWeight: 'bold'}}>{res.uma.firstName} {res.uma.lastName}</td>
+                                      <td style={{padding: '15px', fontFamily: 'monospace'}}>{res.time.toFixed(2)}s</td>
+                                      <td style={{padding: '15px', textAlign: 'right', color: '#888'}}>{idx === 0 ? 'WINNER' : `+${(res.time - outcome.results[0].time).toFixed(2)}s`}</td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+                  <button onClick={onClose} style={{ marginTop: '35px', padding: '18px 60px', backgroundColor: '#e74c3c', color: 'white', borderRadius: '50px', border: 'none', cursor: 'pointer', fontSize: '1.3rem', fontWeight: 'bold', boxShadow: '0 4px 15px rgba(231, 76, 60, 0.4)' }}>
+                      Return to Stable
+                  </button>
+              </div>
+          )}
+        </div>
       </div>
       
       {finished && !showResults && (
