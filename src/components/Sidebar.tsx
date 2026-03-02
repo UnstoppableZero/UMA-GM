@@ -31,20 +31,20 @@ export function Sidebar() {
         {/* LEAGUE & WORLD */}
         <div style={{ ...sectionTitle, marginTop: '20px' }}>LEAGUE</div>
         <NavLink to="/league" label="Standings" icon="🏆" active={location.pathname === '/league'} />
-        
-        {/* NEW AWARDS RACE LINK */}
         <NavLink to="/awards" label="Awards Race" icon="🏅" active={location.pathname === '/awards'} />
-        
         <NavLink to="/league-roster" label="League Roster" icon="👥" active={location.pathname === '/league-roster'} />
         <NavLink to="/calendar" label="Schedule" icon="📅" active={location.pathname === '/calendar'} />
+        
+        {/* NEW INJURY REPORT LINK */}
+        <NavLink to="/injuries" label="Injury Report" icon="🚑" active={location.pathname === '/injuries'} />
         
         <NavLink to="/history" label="History" icon="🏛️" active={location.pathname === '/history'} />
         <NavLink to="/hof" label="Hall of Fame" icon="🌟" active={location.pathname === '/hof'} />
 
+
         {/* SYSTEM */}
         <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid #34495e', display: 'flex', flexDirection: 'column', gap: '5px' }}>
            <NavLink to="/settings" label="Settings" icon="⚙️" active={location.pathname === '/settings'} />
-           
            <NavLink to="/devtools" label="Dev Tools" icon="🛠️" active={location.pathname === '/devtools'} />
         </div>
 
@@ -72,11 +72,10 @@ const NavLink = ({ to, label, icon, active }: { to: string, label: string, icon:
     textDecoration: 'none',
     fontSize: '15px',
     transition: 'all 0.2s',
-    // Dynamic Styling based on 'active' prop
-    backgroundColor: active ? '#3498db' : 'transparent', // Blue if active
-    color: active ? 'white' : '#bdc3c7',                 // White if active, Grey if not
+    backgroundColor: active ? '#3498db' : 'transparent', 
+    color: active ? 'white' : '#bdc3c7',                
     fontWeight: active ? 'bold' : 'normal',
-    borderLeft: active ? '4px solid white' : '4px solid transparent' // Visual indicator
+    borderLeft: active ? '4px solid white' : '4px solid transparent' 
   }}>
     <span>{icon}</span>
     <span>{label}</span>

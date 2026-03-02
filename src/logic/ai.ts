@@ -1,6 +1,6 @@
 // src/logic/ai.ts
 import type { Uma } from '../types';
-import type { RaceEvent } from '../data/calendar';
+import { FULL_CALENDAR, type RaceEvent } from '../data/calendar';
 
 // JRA REALISM CONSTANTS
 const MAX_STARTS_ELITE_SOFT = 6;  
@@ -60,18 +60,43 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   
   const history = uma.history || [];
 
-  // --- NEW: THE GOLDEN TICKET HOLD ---
-  // If the horse won a Trial Race this year, they will REFUSE to enter any G2/G3/Listed races.
-  // They will sit at home and wait exclusively for their G1.
-  const holdsGoldenTicket = Object.keys(TRIAL_MAP).some(g1 => {
-      const trials = TRIAL_MAP[g1];
-      return history.some(h => h.year === currentYear && trials.some(t => h.raceName.includes(t)) && h.rank <= 3);
-  });
+  // --- FIXED: THE "STRICT TARGET" GOLDEN TICKET HOLD ---
+  let targetedG1ByTicket: string | null = null;
 
-  if (holdsGoldenTicket && race.grade !== 'G1') {
-      return false; 
+  for (const g1 of Object.keys(TRIAL_MAP)) {
+      const trials = TRIAL_MAP[g1];
+      
+      const earnedTicket = history.some(h => 
+          h.year === currentYear && 
+          trials.some(t => h.raceName.includes(t)) && 
+          h.rank <= 3
+      );
+      
+      const spentTicket = history.some(h => 
+          h.year === currentYear && 
+          h.raceName.includes(g1)
+      );
+
+      if (earnedTicket && !spentTicket) {
+          // Expiration Check: If they missed the G1 due to injury, the ticket expires
+          const g1Event = FULL_CALENDAR.find(r => r.name.includes(g1));
+          if (g1Event && currentWeek > g1Event.week) {
+              continue; 
+          }
+          targetedG1ByTicket = g1;
+          break; // Lock onto the specific G1
+      }
   }
-  // ------------------------------------
+
+  // If they hold a ticket for a specific G1, they MUST run it and skip all other races
+  if (targetedG1ByTicket) {
+      if (race.name.includes(targetedG1ByTicket)) {
+          return true; // Bypass rest & aptitude filters. They earned it, they're running.
+      } else {
+          return false; // Reject all other races, even other G1s.
+      }
+  }
+  // ---------------------------------------------------
 
   // SUITABILITY CHECK
   // @ts-ignore
@@ -86,7 +111,6 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   // @ts-ignore
   const distApt = uma.aptitude?.distance?.[distType] || 1;
   
-  // FIX: Lowered G1 Aptitude requirement from 5 to 4 so Sprints/Stayers actually fill up!
   const minApt = race.grade === 'G1' ? 4 : 3;
   if (distApt < minApt) return false;
 
@@ -102,8 +126,9 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   if (race.grade === 'G3' && (isChampion || isVeteran || totalWins >= 6)) return false; 
   if (race.grade === 'G2' && (isChampion || isVeteran)) return false;
 
-  // STANDARD CONDITION CHECK
-  const minCondition = race.grade === 'G1' ? 60 : 90;
+  // --- FIXED: STANDARD CONDITION CHECK ---
+  // Lowered the floor to 60 for all races so healthy horses don't skip G2/G3s.
+  const minCondition = 60;
   if ((uma.condition || 100) < minCondition) return false;
 
   // SCHEDULE & REST LOGIC
@@ -119,7 +144,6 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
       
       let requiredRest = isElite ? REST_WEEKS_ELITE : REST_WEEKS_OPEN;
 
-      // FIX: G1s allow a 3-week turnaround (e.g. W10 Prep -> W13 G1)
       if (race.grade === 'G1' && weeksSince >= 3) {
           requiredRest = 3;
       }

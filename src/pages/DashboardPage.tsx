@@ -1,15 +1,17 @@
+// src/pages/DashboardPage.tsx
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { getRacesByWeek } from '../data/calendar';
 import { trainUma } from '../training';
-import { simulateRace, type RaceOutcome } from '../race';
+// FIXED: Reverted to the correct path and imported RaceResult to fix the 'any' type error
+import { simulateRace, type RaceOutcome, type RaceResult } from '../race'; 
 import { useState, useEffect } from 'react';
 import { RaceViewer } from '../components/RaceViewer';
 import { generateTieredUma } from '../generator'; 
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
 import { autoAllocateHorses, calculateOdds, calculateRaceRating } from '../logic/matchmaking'; 
-import { replenishRosters, processWeeklyAIGrowth, assignEndOfYearAwards } from '../logic/season'; // <-- Added assignEndOfYearAwards
+import { replenishRosters, processWeeklyAIGrowth, assignEndOfYearAwards } from '../logic/season';
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -117,7 +119,7 @@ export function DashboardPage() {
         const allocation = allocations[race.id];
         if (!allocation || allocation.field.length < 2) continue;
 
-        const outcome = simulateRace(allocation.field, race.distance);
+        const outcome = simulateRace(allocation.field, race.distance, race.surface);
         (outcome as any).displayName = race.name;
         
         raceResults.push({ 
@@ -127,7 +129,8 @@ export function DashboardPage() {
             surface: race.surface as 'Turf' | 'Dirt' 
         });
 
-        const top3Finishers = outcome.results.slice(0, 3).map(r => ({
+        // FIXED: Explicitly typed `r` as RaceResult to clear the TS error!
+        const top3Finishers = outcome.results.slice(0, 3).map((r: RaceResult) => ({
             id: r.uma.id, name: `${r.uma.firstName} ${r.uma.lastName}`, time: r.time
         }));
 
@@ -141,37 +144,35 @@ export function DashboardPage() {
 
             if (uma.potential && currentRating < uma.potential) {
                 let xpGain = 1; 
-                
                 if (res.rank === 1) xpGain = 4;      
                 else if (res.rank === 2) xpGain = 2; 
-                
                 if (race.grade === 'G1') xpGain += 6; 
                 
                 uma.stats.speed = Math.min(1200, uma.stats.speed + xpGain);
-                uma.stats.stamina = Math.min(1200, uma.stats.stamina + xpGain);
+                uma.stats.stamina = Math.min(1200, uma.stats.stamina + (xpGain + 1));
                 uma.stats.power = Math.min(1200, uma.stats.power + xpGain);
                 uma.stats.guts = Math.min(1200, uma.stats.guts + xpGain);
                 uma.stats.wisdom = Math.min(1200, uma.stats.wisdom + xpGain);
             }
 
-            const injuryRisk = 0.01 + Math.max(0, ((uma.fatigue || 0) - 20) * 0.001);
+            const injuryRisk = 0.005 + Math.max(0, ((uma.fatigue || 0) - 40) * 0.001);
             if (Math.random() < injuryRisk) {
                 const severityRoll = Math.random();
                 let weeks = 4;
                 let type = "Minor";
                 let potDamage = 0; 
 
-                if (severityRoll > 0.95) { 
+                if (severityRoll > 0.98) { 
                     weeks = 20; type = "Catastrophic"; potDamage = 10; 
-                } else if (severityRoll > 0.80) { 
+                } else if (severityRoll > 0.90) { 
                     weeks = 10; type = "Severe"; potDamage = 5; 
-                } else if (severityRoll > 0.50) { 
+                } else if (severityRoll > 0.70) { 
                     weeks = 6; type = "Major"; potDamage = 0; 
                 } else { 
-                    weeks = 3; type = "Minor"; potDamage = 0; 
+                    weeks = 2; type = "Minor"; potDamage = 0; 
                 }
 
-                uma.injuryWeeks = weeks + Math.floor(Math.random() * 3);
+                uma.injuryWeeks = weeks;
                 if (potDamage > 0 && uma.potential) {
                     uma.potential = Math.max(0, uma.potential - potDamage);
                 }
@@ -223,21 +224,23 @@ export function DashboardPage() {
         if (!racedIds.has(uma.id)) {
             if (uma.injuryWeeks > 0) {
                 uma.injuryWeeks--;
-                uma.energy = 100;
+                uma.energy = Math.min(100, (uma.energy || 0) + 25); 
+                uma.fatigue = Math.max(0, (uma.fatigue || 0) - 15);
             } 
-            else if ((uma.fatigue || 0) > 60) {
-                uma.energy = 100; uma.fatigue = 0; 
+            else if ((uma.fatigue || 0) > 40) { 
+                uma.energy = Math.min(100, (uma.energy || 0) + 30); 
+                uma.fatigue = Math.max(0, (uma.fatigue || 0) - 20); 
             } 
             else {
-                const trainInjuryRisk = (uma.fatigue || 0) > 30 ? 0.05 : 0.005; 
+                const trainInjuryRisk = 0.002; 
                 if (Math.random() < trainInjuryRisk) {
-                    uma.injuryWeeks = 4;
+                    uma.injuryWeeks = 2; 
                     if (uma.teamId === 'player') {
-                        db.news.add({ year: gameState.year, week: gameState.week, message: `🚑 ${uma.firstName} ${uma.lastName} tweaked a muscle training. Out 4w.`, type: 'important' });
+                        db.news.add({ year: gameState.year, week: gameState.week, message: `🚑 ${uma.firstName} ${uma.lastName} tweaked a muscle training. Out 2w.`, type: 'important' });
                     }
                 } else {
-                    uma.energy = Math.max(0, (uma.energy || 100) - 10);
-                    uma.fatigue = (uma.fatigue || 0) + 5; 
+                    uma.energy = Math.max(0, (uma.energy || 100) - 5); 
+                    uma.fatigue = Math.min(100, (uma.fatigue || 0) + 5); 
                     if (uma.teamId === 'player') {
                         trainUma(uma, 'balanced');
                     }
@@ -263,14 +266,12 @@ export function DashboardPage() {
             newYear++; 
             setIsSimulating(false);
 
-            // --- END OF YEAR AWARDS (QUICK SIM LOGIC) ---
             const { updatedRoster, newsData } = assignEndOfYearAwards(finalRoster, gameState.year);
             finalRoster = updatedRoster;
             
             if (newsData.length > 0) {
                 await db.news.bulkAdd(newsData);
             }
-            // --------------------------------------------
 
             const { checkRetirement } = await import('../logic/ai');
             let retiredCount = 0;
@@ -326,14 +327,12 @@ export function DashboardPage() {
                   import('../logic/ai').then(async ({ checkRetirement }) => {
                       let currentRoster = await db.umas.toArray();
                       
-                      // --- END OF YEAR AWARDS (BROADCAST LOGIC) ---
                       const { updatedRoster, newsData } = assignEndOfYearAwards(currentRoster, gameState.year);
                       currentRoster = updatedRoster;
                       
                       if (newsData.length > 0) {
                           await db.news.bulkAdd(newsData);
                       }
-                      // --------------------------------------------
 
                       let retiredCount = 0;
                       
@@ -424,8 +423,27 @@ export function DashboardPage() {
                   <button onClick={() => advanceWeek(true)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#1976d2', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                       ▶ Run Race Day
                   </button>
-                  <button onClick={() => advanceWeek(false)} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#7f8c8d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                      ⏭️ Quick Sim
+                  <button 
+                      onClick={() => { 
+                          if (isSimulating) {
+                              setIsSimulating(false); // STOPS THE LOOP
+                          } else {
+                              setIsSimulating(true); 
+                              advanceWeek(false); // STARTS THE LOOP
+                          }
+                      }} 
+                      style={{ 
+                          padding: '12px 24px', 
+                          fontSize: '16px', 
+                          backgroundColor: isSimulating ? '#e74c3c' : '#7f8c8d', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '5px', 
+                          cursor: 'pointer', 
+                          fontWeight: 'bold' 
+                      }}
+                  >
+                      {isSimulating ? '⏹️ Stop Sim' : '⏭️ Quick Sim'}
                   </button>
                   <button onClick={initLeagueMode} style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                       🏆 Reset League

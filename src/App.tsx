@@ -17,6 +17,7 @@ import { CalendarPage } from './pages/CalendarPage';
 import { DevToolsPage } from './pages/DevToolsPage';
 import { LeagueRosterPage } from './pages/LeagueRosterPage';
 import { AwardsRacePage } from './pages/AwardsRacePage';
+import { InjuryReportPage } from './pages/InjuryReportPage';
 
 function App() {
   useEffect(() => { initGame(); }, []);
@@ -43,6 +44,7 @@ function App() {
             <Route path="/devtools" element={<DevToolsPage />} />
             <Route path="/league-roster" element={<LeagueRosterPage />} />
             <Route path="/awards" element={<AwardsRacePage />} />
+            <Route path="/injuries" element={<InjuryReportPage />} />
           </Routes>
 
         </div>

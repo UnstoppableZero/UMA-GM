@@ -43,7 +43,8 @@ export function AwardsRacePage() {
                                         {idx + 1}
                                     </td>
                                     <td style={{ padding: '12px 5px' }}>
-                                        <Link to={`/profile/${cand.uma.id}`} style={{ fontWeight: 'bold', color: '#2980b9', textDecoration: 'none' }}>
+                                        {/* FIXED THE LINK ROUTE HERE */}
+                                        <Link to={`/uma/${cand.uma.id}`} style={{ fontWeight: 'bold', color: '#2980b9', textDecoration: 'none' }}>
                                             {cand.uma.firstName} {cand.uma.lastName}
                                         </Link>
                                     </td>

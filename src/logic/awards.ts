@@ -1,3 +1,4 @@
+// src/logic/awards.ts
 import type { Uma } from '../types';
 import { FULL_CALENDAR } from '../data/calendar';
 
@@ -35,15 +36,29 @@ export function calculateYearScore(uma: Uma, currentYear: number): AwardCandidat
                 wins++;
                 if (raceEvent.grade === 'G1') {
                     g1Wins++;
-                    score += 50000; // Big MVP boost for G1s
+                    score += 100000; // Increased G1 boost so purses don't completely dominate
                 } else if (raceEvent.grade === 'G2') {
                     score += 15000;
                 } else if (raceEvent.grade === 'G3') {
                     score += 5000;
+                } else if (raceEvent.grade === 'Listed') {
+                    score += 2000;
                 }
             }
         }
     });
+
+    // --- 👑 TRIPLE CROWN AUTO-LOCK BONUS 👑 ---
+    // If a horse achieves a Triple Crown, they get an insurmountable MVP boost.
+    const hasWon = (namePart: string) => thisYearRaces.some(h => h.raceName.includes(namePart) && h.rank === 1);
+
+    const isClassicTripleCrown = hasWon("Satsuki Sho") && (hasWon("Tokyo Yushun") || hasWon("Japanese Derby")) && hasWon("Kikuka Sho");
+    const isFilliesTripleCrown = hasWon("Oka Sho") && (hasWon("Yushun Himba") || hasWon("Japanese Oaks")) && hasWon("Shuka Sho");
+
+    if (isClassicTripleCrown || isFilliesTripleCrown) {
+        score += 300000; // Guarantees Horse of the Year
+    }
+    // ------------------------------------------
 
     return { uma, score, wins, g1Wins, earningsEstimate };
 }

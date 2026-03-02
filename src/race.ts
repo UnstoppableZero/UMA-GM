@@ -19,15 +19,13 @@ export interface RaceOutcome {
   log: LogEntry[]; 
 }
 
-// SIMULATION CONSTANTS
 const FRAME_RATE = 10; 
 const RACE_PACE = 16.2; 
 const MAX_SPRINT_BONUS = 1.5;
 
-// --- PHYSICS TUNING v16 (THE "PACK COMPRESSION" UPDATE) ---
-const STAMINA_DRAIN_RATE = 0.60; 
-const LEADER_WIND_DRAG = 1.25;   // Leader burns 25% MORE stamina
-const DRAFTING_BONUS = 0.90;     // Drafters burn 10% LESS
+// --- PHYSICS TUNING v18 (THE GUTS & WISDOM UPDATE) ---
+const LEADER_WIND_DRAG = 1.25;   
+const DRAFTING_BONUS = 0.90;     
 
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
     const s = apt.strategy;
@@ -39,7 +37,6 @@ function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener
 
 export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Dirt' = 'Turf'): RaceOutcome => {
   
-  // 1. Setup
   let racers = field.map(uma => {
     const stamina = uma.stats.stamina;
     // @ts-ignore
@@ -54,7 +51,9 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
     else if (strategy === 'betweener') stratOffset = 100; 
     else if (strategy === 'chaser') stratOffset = 300; 
 
-    const randomNoise = (Math.random() * 30) - 15;
+    // WISDOM IMPACT: High Wisdom horses trigger skills at the optimal, predictable time. Low Wisdom triggers erratically.
+    const wisdomModifier = (1200 - uma.stats.wisdom) / 1200; 
+    const randomNoise = (Math.random() * (60 * wisdomModifier)) - (30 * wisdomModifier);
 
     let skillTriggerMeters = baseTriggerDist + stratOffset + randomNoise;
     skillTriggerMeters = Math.max(distance * 0.5, skillTriggerMeters); 
@@ -74,7 +73,8 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       isSpurting: false,
       stats: uma.stats,
       isDrafting: false,
-      isLeading: false
+      isLeading: false,
+      hasBonked: false
     };
   });
 
@@ -88,7 +88,9 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
 
   tempLogs.push({ message: getCommentary('start'), time: 0.1 });
 
-  // 2. Main Loop
+  // THE DISTANCE TAX 
+  const distanceTax = distance / 1600; 
+
   while (finishedCount < racers.length) {
     time += (1 / FRAME_RATE);
     if (time > 600) break; 
@@ -121,7 +123,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
         });
     }
 
-    // --- PHYSICS ENGINE ---
     racers.forEach(r => {
       if (r.finished) return;
 
@@ -129,115 +130,104 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       let targetSpeed = 0;
       r.isDrafting = false; 
 
-      // ==========================================================
-      // PHASE 1: THE INVISIBLE RAIL (0% - 70%)
-      // ==========================================================
+      // PHASE 1: THE INVISIBLE RAIL
       if (progress < 0.70) {
-          
-          // 1. Establish Position Target relative to Leader
-          // NERF: Massive Pack Compression.
-          // Runners no longer get a "Safe" 10m lead. The pack hunts closely.
           let targetGap = 0;
           if (r.strategy === 'runner') targetGap = 0;       
-          else if (r.strategy === 'leader') targetGap = 2;   // Was 3
-          else if (r.strategy === 'betweener') targetGap = 4; // Was 6
-          else if (r.strategy === 'chaser') targetGap = 6;  // Was 10! Chasers are now right on their heels.
+          else if (r.strategy === 'leader') targetGap = 2;   
+          else if (r.strategy === 'betweener') targetGap = 4; 
+          else if (r.strategy === 'chaser') targetGap = 6;  
           
           const myGap = leaderDist - r.currentDist;
           const gapDelta = myGap - targetGap;
 
-          // 2. Base Speed
           targetSpeed = RACE_PACE;
 
-          // 3. Rubber Band Physics (Keep the pack tight)
           if (gapDelta > 2) { 
-             targetSpeed *= 1.05; // Stronger catch-up in Phase 1
+             targetSpeed *= 1.05; 
              if (myGap < 5 && !r.isLeading) r.isDrafting = true;
           } else if (gapDelta < -1) {
-             if (!r.isLeading) {
-                 targetSpeed *= 0.96;
-             }
+             if (!r.isLeading) targetSpeed *= 0.96;
+          }
+
+          // WISDOM IMPACT: Pacing Efficiency. 
+          // Low wisdom horses "fight the bit" and accidentally run too fast in Phase 1, wasting stamina.
+          if (r.stats.wisdom < 400 && Math.random() < 0.05) {
+              targetSpeed *= 1.03; 
           }
       } 
       
-      // ==========================================================
-      // PHASE 2: THE RELEASE (70% - 100%)
-      // ==========================================================
+      // PHASE 2: THE RELEASE
       else {
           const distRemaining = distance - r.currentDist;
-          
           const speedBonus = (r.stats.speed / 1200) * (MAX_SPRINT_BONUS * 0.7);
           const powerBonus = (r.stats.power / 1200) * (MAX_SPRINT_BONUS * 0.3);
           
           targetSpeed = RACE_PACE + speedBonus + powerBonus;
 
-          const sprintCostPerMeter = 0.6; 
+          const sprintCostPerMeter = 0.5 * distanceTax; 
           const canSprint = r.currentStamina > (distRemaining * sprintCostPerMeter);
 
           let spurtThreshold = 0.70; 
           if (r.stats.stamina > 600) spurtThreshold = 0.65; 
           if (r.stats.stamina < 450) spurtThreshold = 0.75; 
 
-          if (progress > spurtThreshold && canSprint) {
+          // GUTS IMPACT: The Second Wind.
+          // If they don't have enough stamina to sprint the whole way, Guts lets them sprint early anyway, banking on a second wind.
+          const gutsThresholdOverride = canSprint || (r.stats.guts > 800 && progress > 0.85);
+
+          if (progress > spurtThreshold && gutsThresholdOverride) {
              r.isSpurting = true;
           } else {
              r.isSpurting = false; 
           }
 
           if (r.isSpurting) {
-             targetSpeed += 0.5; // Base Burst
+             targetSpeed += 0.5; 
              
-             // --- STRATEGY SPEED HIERARCHY (THE FIX) ---
-             // Runners are tired. Chasers are fresh.
-             // Chasers now have a HIGHER Top Speed Cap than Runners.
-             if (r.strategy === 'runner') {
-                 // Runners get NO extra strategy bonus. They rely purely on the lead they built.
-                 targetSpeed += 0.0; 
-             }
-             else if (r.strategy === 'leader') {
-                 targetSpeed += 0.15; // Small bonus
-             }
-             else if (r.strategy === 'betweener') {
-                 targetSpeed += 0.45; // Significant bonus
-             }
-             else if (r.strategy === 'chaser') {
-                 targetSpeed += 0.75; // MASSIVE bonus (The Rocket)
-             }
+             if (r.strategy === 'runner') targetSpeed += 0.0; 
+             else if (r.strategy === 'leader') targetSpeed += 0.15; 
+             else if (r.strategy === 'betweener') targetSpeed += 0.45; 
+             else if (r.strategy === 'chaser') targetSpeed += 0.75; 
              
-             r.currentStamina -= 1.0; 
+             r.currentStamina -= (1.0 * distanceTax); 
           }
       }
 
-      // ==========================================================
-      // MODIFIERS & STAMINA LOGIC
-      // ==========================================================
-
-      const distMod = distance > 2400 ? 0.8 : 1.0;
-      let drain = STAMINA_DRAIN_RATE * distMod * (1 / FRAME_RATE);
+      let drain = 0.45 * distanceTax * (1 / FRAME_RATE);
       
       if (r.isSpurting) drain *= 1.5; 
-
-      if (r.isLeading) {
-          drain *= LEADER_WIND_DRAG; // 25% EXTRA DRAIN for Leader
-      } else if (r.isDrafting) {
-          drain *= DRAFTING_BONUS;   
-      }
+      if (r.isLeading) drain *= LEADER_WIND_DRAG; 
+      else if (r.isDrafting) drain *= DRAFTING_BONUS;   
       
+      // WISDOM IMPACT: Cornering Efficiency.
+      // High Wisdom horses lose less stamina throughout the entire race.
+      const wisdomSave = (r.stats.wisdom / 1200) * 0.15; // Up to 15% stamina savings
+      drain *= (1 - wisdomSave);
+
       r.currentStamina -= drain;
 
-      // --- THE "BONK" (CATASTROPHIC FAILURE) ---
+      // --- THE HARSH BONK (WITH GUTS MITIGATION) ---
       if (r.currentStamina <= 0) {
            r.currentStamina = 0;
-           targetSpeed = Math.min(targetSpeed, RACE_PACE * 0.60); // Drop to 60% speed
            r.isSpurting = false;
            
-           if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("collapses"))) {
-               tempLogs.push({ message: `🛑 ${r.uma.lastName} hits the wall!`, time: time });
+           if (!r.hasBonked) {
+               r.hasBonked = true;
+               if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("wall"))) {
+                   tempLogs.push({ message: `🛑 ${r.uma.lastName} hits the wall! They are out of gas!`, time: time });
+               }
            }
+
+           // GUTS IMPACT: The Struggle.
+           // A horse with 100 Guts collapses to 40% speed. A horse with 1000 Guts fights through the pain at 80% speed.
+           const gutsSurvivalRate = 0.40 + ((r.stats.guts / 1200) * 0.40);
+           targetSpeed = Math.min(targetSpeed, RACE_PACE * gutsSurvivalRate); 
       }
 
-      if (!r.skillTriggered && r.currentDist >= r.skillTriggerMeters && r.currentStamina > 50) {
-         const chance = 0.70 + (r.stats.wisdom / 4000); 
+      if (!r.skillTriggered && r.currentDist >= r.skillTriggerMeters && r.currentStamina > 20) {
+         // Wisdom also dictates skill trigger reliability
+         const chance = 0.50 + (r.stats.wisdom / 2400); 
          if (Math.random() < chance) {
              r.skillTriggered = true;
              if (!tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("Ultimate"))) {
