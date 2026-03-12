@@ -29,7 +29,6 @@ const RESTRICTED_3YO_RACES = [
     "Fillies' Revue", "Anemone Stakes", "Wakaba Stakes", "Sweetpea Stakes", "Principal Stakes"
 ];
 
-// EXPORTED SO MATCHMAKING CAN USE IT
 export const TRIAL_MAP: Record<string, string[]> = {
     "Satsuki Sho": ["Yayoi Sho", "Spring Stakes", "Wakaba Stakes"],
     "Tokyo Yushun": ["Satsuki Sho", "Aoba Sho", "Kyoto Shimbun Hai", "Principal Stakes"],
@@ -60,7 +59,38 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   
   const history = uma.history || [];
 
-  // --- FIXED: THE "STRICT TARGET" GOLDEN TICKET HOLD ---
+  // ==========================================================================
+  // --- NEW: THE TRIPLE CROWN OBSESSION ---
+  // ==========================================================================
+  const wonSatsuki = history.some(h => h.year === currentYear && h.raceName.includes("Satsuki Sho") && h.rank === 1);
+  const wonDerby = history.some(h => h.year === currentYear && h.raceName.includes("Tokyo Yushun") && h.rank === 1);
+  const kikukaEvent = FULL_CALENDAR.find(r => r.name.includes("Kikuka Sho"));
+  
+  if (wonSatsuki && wonDerby && kikukaEvent && currentWeek <= kikukaEvent.week) {
+      const classicPathRaces = ["Kikuka Sho", "St. Lite Kinen", "Kobe Shimbun Hai"];
+      if (classicPathRaces.some(c => race.name.includes(c))) {
+          if (race.name.includes("Kikuka Sho")) return true; // Force entry, ignore distance penalties!
+      } else {
+          return false; // Refuse all other races until the Kikuka Sho is over
+      }
+  }
+
+  const wonOka = history.some(h => h.year === currentYear && h.raceName.includes("Oka Sho") && h.rank === 1);
+  const wonOaks = history.some(h => h.year === currentYear && h.raceName.includes("Yushun Himba") && h.rank === 1);
+  const shukaEvent = FULL_CALENDAR.find(r => r.name.includes("Shuka Sho"));
+
+  // Make sure they don't double dip if they somehow won both sets of spring classics
+  if (wonOka && wonOaks && !(wonSatsuki && wonDerby) && shukaEvent && currentWeek <= shukaEvent.week) {
+      const filliesPathRaces = ["Shuka Sho", "Rose Stakes", "Shion Stakes"];
+      if (filliesPathRaces.some(f => race.name.includes(f))) {
+          if (race.name.includes("Shuka Sho")) return true; // Force entry
+      } else {
+          return false; // Refuse all other races until the Shuka Sho is over
+      }
+  }
+  // ==========================================================================
+
+  // --- THE "STRICT TARGET" GOLDEN TICKET HOLD ---
   let targetedG1ByTicket: string | null = null;
 
   for (const g1 of Object.keys(TRIAL_MAP)) {
@@ -78,22 +108,20 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
       );
 
       if (earnedTicket && !spentTicket) {
-          // Expiration Check: If they missed the G1 due to injury, the ticket expires
           const g1Event = FULL_CALENDAR.find(r => r.name.includes(g1));
           if (g1Event && currentWeek > g1Event.week) {
               continue; 
           }
           targetedG1ByTicket = g1;
-          break; // Lock onto the specific G1
+          break; 
       }
   }
 
-  // If they hold a ticket for a specific G1, they MUST run it and skip all other races
   if (targetedG1ByTicket) {
       if (race.name.includes(targetedG1ByTicket)) {
-          return true; // Bypass rest & aptitude filters. They earned it, they're running.
+          return true; 
       } else {
-          return false; // Reject all other races, even other G1s.
+          return false; 
       }
   }
   // ---------------------------------------------------
@@ -126,8 +154,7 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   if (race.grade === 'G3' && (isChampion || isVeteran || totalWins >= 6)) return false; 
   if (race.grade === 'G2' && (isChampion || isVeteran)) return false;
 
-  // --- FIXED: STANDARD CONDITION CHECK ---
-  // Lowered the floor to 60 for all races so healthy horses don't skip G2/G3s.
+  // STANDARD CONDITION CHECK
   const minCondition = 60;
   if ((uma.condition || 100) < minCondition) return false;
 
@@ -166,7 +193,6 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
 
 export function checkRetirement(uma: Uma, currentYear: number): boolean {
     const age = uma.age;
-    const totalEarnings = uma.career?.earnings || 0;
     const totalRaces = uma.career?.races || 0;
     
     const g1Wins = uma.history?.filter(h => 
@@ -184,8 +210,6 @@ export function checkRetirement(uma: Uma, currentYear: number): boolean {
         if (g1Wins < 3) return true; 
         return Math.random() > 0.4; 
     }
-    
-    if (age >= 4 && totalEarnings < 500) return true;
     
     if (age >= 6) {
         const chance = age === 6 ? 0.3 : 0.6; 

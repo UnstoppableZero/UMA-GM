@@ -3,29 +3,18 @@ import type { Uma } from './types';
 import { getCommentary } from './commentary'; 
 
 export interface RaceResult {
-  uma: Uma;
-  rank: number;
-  time: number;
-  splits: number[];
+  uma: Uma; rank: number; time: number; splits: number[];
 }
 
-export interface LogEntry {
-  message: string;
-  timePct: number; 
-}
+export interface LogEntry { message: string; timePct: number; }
 
-export interface RaceOutcome {
-  results: RaceResult[];
-  log: LogEntry[]; 
-}
+export interface RaceOutcome { results: RaceResult[]; log: LogEntry[]; }
 
 const FRAME_RATE = 10; 
-const RACE_PACE = 16.2; 
-const MAX_SPRINT_BONUS = 1.5;
 
-// --- PHYSICS TUNING v18 (THE GUTS & WISDOM UPDATE) ---
-const LEADER_WIND_DRAG = 1.25;   
-const DRAFTING_BONUS = 0.90;     
+// --- OVERHAUL: PUNISHING WIND & DRAFTING ---
+const LEADER_WIND_DRAG = 1.35; // Leader burns 35% more stamina
+const DRAFTING_BONUS = 0.80;   // Pack saves 20% stamina tucked in
 
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
     const s = apt.strategy;
@@ -35,61 +24,75 @@ function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener
     return 'chaser';
 }
 
+function getDistanceType(dist: number): 'short' | 'mile' | 'medium' | 'long' {
+  if (dist <= 1400) return 'short';
+  if (dist <= 1600) return 'mile';
+  if (dist <= 2200) return 'medium';
+  return 'long';
+}
+
 export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Dirt' = 'Turf'): RaceOutcome => {
   
+  const distCategory = getDistanceType(distance);
+
+  // --- OVERHAUL: BIOLOGICAL BASE PACE ---
+  let basePace = 16.6;
+  if (distance <= 1400) basePace = 17.5;      
+  else if (distance <= 1800) basePace = 17.0; 
+  else if (distance <= 2400) basePace = 16.5; 
+  else basePace = 16.0;                       
+
   let racers = field.map(uma => {
-    const stamina = uma.stats.stamina;
+    // @ts-ignore
+    const aptScore = uma.aptitude.distance[distCategory] || 1;
+    let penaltyMod = 1.0;
+    if (aptScore === 6) penaltyMod = 0.95;      
+    else if (aptScore <= 4) penaltyMod = 0.85;  
+    else if (aptScore <= 2) penaltyMod = 0.70;  
+
+    const effectiveSpeed = uma.stats.speed * penaltyMod;
+    const effectiveStamina = uma.stats.stamina * penaltyMod;
+    const effectivePower = uma.stats.power * penaltyMod;
+    
     // @ts-ignore
     const strategy = getBestStrategy(uma.aptitude);
 
-    let baseTriggerDist = distance - 600; 
-    if (distance <= 1400) baseTriggerDist = distance - 400; 
-    
-    let stratOffset = 0;
-    if (strategy === 'runner') stratOffset = -150;     
-    else if (strategy === 'leader') stratOffset = -50; 
-    else if (strategy === 'betweener') stratOffset = 100; 
-    else if (strategy === 'chaser') stratOffset = 300; 
+    // --- OVERHAUL: DYNAMIC PREFERRED GAPS (THE TEARDROP SHAPE) ---
+    let preferredGap = 0;
+    if (strategy === 'runner') preferredGap = 0; 
+    else if (strategy === 'leader') preferredGap = 3 + Math.random() * 5;     
+    else if (strategy === 'betweener') preferredGap = 10 + Math.random() * 8; 
+    else if (strategy === 'chaser') preferredGap = 20 + Math.random() * 10;   
 
-    // WISDOM IMPACT: High Wisdom horses trigger skills at the optimal, predictable time. Low Wisdom triggers erratically.
     const wisdomModifier = (1200 - uma.stats.wisdom) / 1200; 
     const randomNoise = (Math.random() * (60 * wisdomModifier)) - (30 * wisdomModifier);
 
-    let skillTriggerMeters = baseTriggerDist + stratOffset + randomNoise;
+    let skillTriggerMeters = (distance - 600) + randomNoise;
     skillTriggerMeters = Math.max(distance * 0.5, skillTriggerMeters); 
     skillTriggerMeters = Math.min(distance - 50, skillTriggerMeters);
 
     return {
       uma,
-      currentDist: 0,
-      currentSpeed: 0,
-      currentStamina: stamina,
-      maxStamina: stamina, 
-      strategy,
-      finished: false,
-      finishTime: 0,
-      skillTriggered: false,
-      skillTriggerMeters, 
-      isSpurting: false,
-      stats: uma.stats,
-      isDrafting: false,
-      isLeading: false,
-      hasBonked: false
+      currentDist: 0, currentSpeed: 0,
+      currentStamina: effectiveStamina, maxStamina: effectiveStamina, 
+      effectiveSpeed, effectivePower, strategy, preferredGap,
+      finished: false, finishTime: 0,
+      inZone: false, isSpurting: false, stats: uma.stats,
+      isDrafting: false, isLeading: false, hasBonked: false
     };
   });
 
   let time = 0;
   let finishedCount = 0;
   const tempLogs: { message: string, time: number }[] = [];
-  let hasannouncedMid = false;
+  
+  let announced1000m = false;
   let hasAnnouncedFinal = false;
-  let leaderId = "";
   let leaderDist = 0;
 
   tempLogs.push({ message: getCommentary('start'), time: 0.1 });
 
-  // THE DISTANCE TAX 
-  const distanceTax = distance / 1600; 
+  const distanceTax = distance / 2000; 
 
   while (finishedCount < racers.length) {
     time += (1 / FRAME_RATE);
@@ -101,26 +104,18 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
     
     racers.forEach(r => r.isLeading = (r.uma.id === leader.uma.id));
 
-    if (time % 2 < 0.1 && leader.uma.id !== leaderId && leader.currentDist > 50) {
-        leaderId = leader.uma.id;
-        if (leader.currentDist < distance - 200) {
-            tempLogs.push({
-                message: getCommentary('leader', { name: leader.uma.lastName }),
-                time: time
-            });
-        }
+    if (leaderDist >= 1000 && !announced1000m) {
+        announced1000m = true;
+        let desc = "";
+        if (time < 58.5) desc = getCommentary('split1000mFast', { time: time.toFixed(1) });
+        else if (time > 61.5) desc = getCommentary('split1000mSlow', { time: time.toFixed(1) });
+        else desc = getCommentary('split1000mNormal', { time: time.toFixed(1) });
+        tempLogs.push({ message: desc, time: time });
     }
-    if (!hasannouncedMid && leader.currentDist > distance * 0.5) {
-        hasannouncedMid = true;
-        tempLogs.push({ message: getCommentary('midRace'), time: time });
-    }
-    const finalStretchDist = distance > 2400 ? 400 : 200;
-    if (!hasAnnouncedFinal && leader.currentDist > distance - finalStretchDist) {
+
+    if (!hasAnnouncedFinal && leaderDist > distance - 300) {
         hasAnnouncedFinal = true;
-        tempLogs.push({
-            message: distance > 2400 ? "🔔 The final bend! Who has the legs left?" : getCommentary('finalStraight'),
-            time: time
-        });
+        tempLogs.push({ message: getCommentary('finalStraight'), time: time });
     }
 
     racers.forEach(r => {
@@ -130,117 +125,84 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       let targetSpeed = 0;
       r.isDrafting = false; 
 
-      // PHASE 1: THE INVISIBLE RAIL
-      if (progress < 0.70) {
-          let targetGap = 0;
-          if (r.strategy === 'runner') targetGap = 0;       
-          else if (r.strategy === 'leader') targetGap = 2;   
-          else if (r.strategy === 'betweener') targetGap = 4; 
-          else if (r.strategy === 'chaser') targetGap = 6;  
-          
+      const speedRatio = r.effectiveSpeed / 1200;
+      const powerRatio = r.effectivePower / 1200;
+
+      if (progress < 0.65) {
           const myGap = leaderDist - r.currentDist;
-          const gapDelta = myGap - targetGap;
+          
+          targetSpeed = basePace;
 
-          targetSpeed = RACE_PACE;
-
-          if (gapDelta > 2) { 
-             targetSpeed *= 1.05; 
-             if (myGap < 5 && !r.isLeading) r.isDrafting = true;
-          } else if (gapDelta < -1) {
+          if (myGap > r.preferredGap + 2) { 
+             targetSpeed *= 1.04; 
+             if (myGap > 3 && myGap < 15 && !r.isLeading) r.isDrafting = true;
+          } else if (myGap < r.preferredGap - 1) {
              if (!r.isLeading) targetSpeed *= 0.96;
           }
-
-          // WISDOM IMPACT: Pacing Efficiency. 
-          // Low wisdom horses "fight the bit" and accidentally run too fast in Phase 1, wasting stamina.
-          if (r.stats.wisdom < 400 && Math.random() < 0.05) {
-              targetSpeed *= 1.03; 
-          }
       } 
-      
-      // PHASE 2: THE RELEASE
       else {
+          const sprintCostPerMeter = 1.0 * distanceTax; 
           const distRemaining = distance - r.currentDist;
-          const speedBonus = (r.stats.speed / 1200) * (MAX_SPRINT_BONUS * 0.7);
-          const powerBonus = (r.stats.power / 1200) * (MAX_SPRINT_BONUS * 0.3);
-          
-          targetSpeed = RACE_PACE + speedBonus + powerBonus;
-
-          const sprintCostPerMeter = 0.5 * distanceTax; 
           const canSprint = r.currentStamina > (distRemaining * sprintCostPerMeter);
 
-          let spurtThreshold = 0.70; 
-          if (r.stats.stamina > 600) spurtThreshold = 0.65; 
-          if (r.stats.stamina < 450) spurtThreshold = 0.75; 
-
-          // GUTS IMPACT: The Second Wind.
-          // If they don't have enough stamina to sprint the whole way, Guts lets them sprint early anyway, banking on a second wind.
-          const gutsThresholdOverride = canSprint || (r.stats.guts > 800 && progress > 0.85);
-
-          if (progress > spurtThreshold && gutsThresholdOverride) {
+          if (canSprint || (r.stats.guts > 800 && progress > 0.85)) {
              r.isSpurting = true;
           } else {
              r.isSpurting = false; 
           }
 
-          if (r.isSpurting) {
-             targetSpeed += 0.5; 
+          if (progress > 0.75 && !r.inZone && r.stats.guts > 750 && r.stats.wisdom > 750 && !r.hasBonked) {
+              if (Math.random() < 0.002) { 
+                  r.inZone = true;
+                  tempLogs.push({ message: getCommentary('zoneEntered', { name: r.uma.lastName }), time: time });
+              }
+          }
+
+          if (r.isSpurting || r.inZone) {
+             const speedBonus = Math.pow(speedRatio, 1.6) * 2.0;
+             targetSpeed = basePace + speedBonus;
              
-             if (r.strategy === 'runner') targetSpeed += 0.0; 
-             else if (r.strategy === 'leader') targetSpeed += 0.15; 
-             else if (r.strategy === 'betweener') targetSpeed += 0.45; 
-             else if (r.strategy === 'chaser') targetSpeed += 0.75; 
-             
-             r.currentStamina -= (1.0 * distanceTax); 
+             if (r.strategy === 'chaser') targetSpeed += 0.4; 
+             if (r.inZone) targetSpeed += 0.8; 
+          } else {
+             targetSpeed = basePace; 
           }
       }
 
-      let drain = 0.45 * distanceTax * (1 / FRAME_RATE);
+      let drain = 0.60 * distanceTax * (1 / FRAME_RATE);
       
-      if (r.isSpurting) drain *= 1.5; 
+      if (r.isSpurting) {
+          const spurtTax = 1.0 + Math.pow(speedRatio, 2); 
+          drain *= (2.0 * spurtTax); 
+      }
+      
       if (r.isLeading) drain *= LEADER_WIND_DRAG; 
       else if (r.isDrafting) drain *= DRAFTING_BONUS;   
       
-      // WISDOM IMPACT: Cornering Efficiency.
-      // High Wisdom horses lose less stamina throughout the entire race.
-      const wisdomSave = (r.stats.wisdom / 1200) * 0.15; // Up to 15% stamina savings
+      if (r.inZone) drain = 0; 
+
+      const wisdomSave = Math.pow(r.stats.wisdom / 1200, 1.5) * 0.15; 
       drain *= (1 - wisdomSave);
 
       r.currentStamina -= drain;
 
-      // --- THE HARSH BONK (WITH GUTS MITIGATION) ---
       if (r.currentStamina <= 0) {
            r.currentStamina = 0;
            r.isSpurting = false;
+           r.inZone = false;
            
            if (!r.hasBonked) {
                r.hasBonked = true;
-               if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("wall"))) {
-                   tempLogs.push({ message: `🛑 ${r.uma.lastName} hits the wall! They are out of gas!`, time: time });
+               if (r.isLeading && !tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("gas"))) {
+                   tempLogs.push({ message: `🛑 ${r.uma.lastName} is out of gas!`, time: time });
                }
            }
-
-           // GUTS IMPACT: The Struggle.
-           // A horse with 100 Guts collapses to 40% speed. A horse with 1000 Guts fights through the pain at 80% speed.
-           const gutsSurvivalRate = 0.40 + ((r.stats.guts / 1200) * 0.40);
-           targetSpeed = Math.min(targetSpeed, RACE_PACE * gutsSurvivalRate); 
+           
+           const gutsSurvivalRate = 0.85 + ((r.stats.guts / 1200) * 0.10); 
+           targetSpeed = Math.min(targetSpeed, basePace * gutsSurvivalRate); 
       }
 
-      if (!r.skillTriggered && r.currentDist >= r.skillTriggerMeters && r.currentStamina > 20) {
-         // Wisdom also dictates skill trigger reliability
-         const chance = 0.50 + (r.stats.wisdom / 2400); 
-         if (Math.random() < chance) {
-             r.skillTriggered = true;
-             if (!tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("Ultimate"))) {
-                 tempLogs.push({ message: `⚡ ${r.uma.lastName} activates Ultimate!`, time: time });
-             }
-         }
-      }
-
-      if (r.skillTriggered) {
-          targetSpeed += 0.8;
-      }
-
-      const acceleration = (r.stats.power / 200) * (1 / FRAME_RATE); 
+      const acceleration = Math.max(0.1, Math.pow(powerRatio, 1.5) * 1.5) * (1 / FRAME_RATE); 
       if (r.currentSpeed < targetSpeed) {
          r.currentSpeed = Math.min(targetSpeed, r.currentSpeed + acceleration);
       } else {
@@ -260,20 +222,11 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
   racers.sort((a, b) => a.finishTime - b.finishTime);
 
   const results = racers.map((r, i) => ({
-    uma: r.uma,
-    rank: i + 1,
-    time: parseFloat(r.finishTime.toFixed(2)),
-    splits: [],
+    uma: r.uma, rank: i + 1, time: parseFloat(r.finishTime.toFixed(2)), splits: [],
   }));
 
   const raceEndTime = Math.max(...results.map(r => r.time));
-
-  const finalLog: LogEntry[] = tempLogs.map(l => ({
-      message: l.message,
-      timePct: l.time / raceEndTime
-  }));
-
-  finalLog.unshift({ message: getCommentary('start'), timePct: 0.0 });
+  const finalLog: LogEntry[] = tempLogs.map(l => ({ message: l.message, timePct: l.time / raceEndTime }));
   finalLog.push({ message: getCommentary('winnerAnnouncement', { winner: results[0].uma.lastName }), timePct: 1.0 });
 
   return { results, log: finalLog };

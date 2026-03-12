@@ -1,6 +1,6 @@
 // src/db.ts
 import Dexie, { type Table } from 'dexie';
-import type { Uma, Team } from './types'; // Import Team here
+import type { Uma, Team, DraftPick } from './types'; 
 
 export interface GameState {
   id: number;
@@ -26,26 +26,28 @@ export interface NewsItem {
   year: number;
   week: number;
   message: string;
-  type: 'info' | 'important' | 'retirement' | 'record';
+  type: 'info' | 'important' | 'retirement' | 'record' | 'draft';
 }
 
 export class UmaDatabase extends Dexie {
   umas!: Table<Uma, string>; 
-  teams!: Table<Team, string>; // <--- NEW TABLE
+  teams!: Table<Team, string>; 
   gameState!: Table<GameState, number>;
   raceHistory!: Table<RaceHistoryRecord, number>;
   news!: Table<NewsItem, number>;
+  draftPicks!: Table<DraftPick, number>; // <--- NEW TABLE
 
   constructor() {
     super('UmaGM_DB');
     
-    // VERSION 6: Add 'teams' table and change 'team' to 'teamId' in umas
-    this.version(6).stores({
-      umas: 'id, teamId, lastName, stats.speed', // Changed 'team' -> 'teamId'
-      teams: 'id, name', // <--- New Table Definition
+    // VERSION 7: Added draftPicks table
+    this.version(7).stores({
+      umas: 'id, teamId, lastName, stats.speed', 
+      teams: 'id, name', 
       gameState: 'id',
       raceHistory: '++id, year, raceName',
-      news: '++id, year'
+      news: '++id, year',
+      draftPicks: '++id, year, teamId, umaId' // <--- New Table Definition
     });
   }
 }
@@ -62,7 +64,6 @@ export async function initGame() {
       money: 10000,
       coachingPolicy: 'balanced'
     });
-    // Add welcome news
     await db.news.add({
       year: 1, week: 1, message: "Welcome to UmaGM! The new stable has officially opened.", type: 'info'
     });

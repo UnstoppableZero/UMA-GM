@@ -35,12 +35,12 @@ export function Sidebar() {
         <NavLink to="/league-roster" label="League Roster" icon="👥" active={location.pathname === '/league-roster'} />
         <NavLink to="/calendar" label="Schedule" icon="📅" active={location.pathname === '/calendar'} />
         
-        {/* NEW INJURY REPORT LINK */}
-        <NavLink to="/injuries" label="Injury Report" icon="🚑" active={location.pathname === '/injuries'} />
+        {/* NEW: DRAFT HISTORY LINK */}
+        <NavLink to="/draft" label="Draft History" icon="📋" active={location.pathname === '/draft'} />
         
+        <NavLink to="/injuries" label="Injury Report" icon="🚑" active={location.pathname === '/injuries'} />
         <NavLink to="/history" label="History" icon="🏛️" active={location.pathname === '/history'} />
         <NavLink to="/hof" label="Hall of Fame" icon="🌟" active={location.pathname === '/hof'} />
-
 
         {/* SYSTEM */}
         <div style={{ marginTop: 'auto', paddingTop: '20px', borderTop: '1px solid #34495e', display: 'flex', flexDirection: 'column', gap: '5px' }}>

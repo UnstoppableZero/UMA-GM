@@ -3,7 +3,6 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { getRacesByWeek } from '../data/calendar';
 import { trainUma } from '../training';
-// FIXED: Reverted to the correct path and imported RaceResult to fix the 'any' type error
 import { simulateRace, type RaceOutcome, type RaceResult } from '../race'; 
 import { useState, useEffect } from 'react';
 import { RaceViewer } from '../components/RaceViewer';
@@ -11,7 +10,7 @@ import { generateTieredUma } from '../generator';
 import { LEAGUE_TEAMS } from '../data/teams'; 
 import type { Uma } from '../types';
 import { autoAllocateHorses, calculateOdds, calculateRaceRating } from '../logic/matchmaking'; 
-import { replenishRosters, processWeeklyAIGrowth, assignEndOfYearAwards } from '../logic/season';
+import { processOffseason, processWeeklyAIGrowth, assignEndOfYearAwards } from '../logic/season';
 
 const formatTime = (rawSeconds: number) => {
   const minutes = Math.floor(rawSeconds / 60);
@@ -60,47 +59,44 @@ export function DashboardPage() {
     : {};
 
   const initLeagueMode = async () => {
-    if (!confirm("⚠️ This will WIPE everything and generate a balanced league (~230 horses). Ready?")) return;
+    if (!confirm("⚠️ This will WIPE everything and generate a 350-horse league. Ready?")) return;
     
     await db.umas.clear();
     await db.teams.clear();
     await db.gameState.update(1, { year: 1, week: 1, money: 1000000 });
     await db.news.clear();
     await db.raceHistory.clear();
+    await db.draftPicks.clear();
     
     const teamsData = LEAGUE_TEAMS.map(t => ({ ...t, history: { wins: 0, championships: 0, earnings: 0 } }));
     await db.teams.bulkAdd(teamsData);
     
     const newRoster: Uma[] = [];
 
-    for (let i = 0; i < 8; i++) {
-        const horse = generateTieredUma(1); 
+    // --- FIXED: EXACTLY 350 HORSES ---
+    const totalTeams = teamsData.length;
+    const horsesPerTeam = Math.floor(350 / totalTeams); 
+
+    // Generate Player Horses
+    for (let i = 0; i < horsesPerTeam; i++) {
+        const age = Math.floor(Math.random() * 4) + 3; // Ages 3 to 6
+        const tier = Math.random() < 0.2 ? 1 : (Math.random() < 0.7 ? 2 : 3);
+        const horse = generateTieredUma(tier, undefined, age); 
         horse.teamId = 'player';
         newRoster.push(horse);
     }
 
-    const eliteTeams = teamsData.filter(t => t.prestige >= 90 && t.id !== 'player');
-    for (const team of eliteTeams) {
-        for (let i = 0; i < 10; i++) { 
-            const horse = generateTieredUma(1);
-            horse.teamId = team.id;
-            newRoster.push(horse);
-        }
-    }
+    // Generate AI Horses
+    const aiTeams = teamsData.filter(t => t.id !== 'player');
+    for (const team of aiTeams) {
+        for (let i = 0; i < horsesPerTeam; i++) { 
+            const age = Math.floor(Math.random() * 4) + 3;
+            let tier: 1 | 2 | 3 = 3;
+            if (team.prestige >= 90) tier = Math.random() < 0.4 ? 1 : 2;
+            else if (team.prestige >= 60) tier = Math.random() < 0.2 ? 1 : (Math.random() < 0.6 ? 2 : 3);
+            else tier = Math.random() < 0.1 ? 2 : 3;
 
-    const midTeams = teamsData.filter(t => t.prestige >= 60 && t.prestige < 90);
-    for (const team of midTeams) {
-        for (let i = 0; i < 15; i++) { 
-            const horse = generateTieredUma(2);
-            horse.teamId = team.id;
-            newRoster.push(horse);
-        }
-    }
-
-    const mobTeams = teamsData.filter(t => t.prestige < 60);
-    for (const team of mobTeams) {
-        for (let i = 0; i < 25; i++) { 
-            const horse = generateTieredUma(3); 
+            const horse = generateTieredUma(tier, undefined, age);
             horse.teamId = team.id;
             newRoster.push(horse);
         }
@@ -129,7 +125,6 @@ export function DashboardPage() {
             surface: race.surface as 'Turf' | 'Dirt' 
         });
 
-        // FIXED: Explicitly typed `r` as RaceResult to clear the TS error!
         const top3Finishers = outcome.results.slice(0, 3).map((r: RaceResult) => ({
             id: r.uma.id, name: `${r.uma.firstName} ${r.uma.lastName}`, time: r.time
         }));
@@ -268,14 +263,10 @@ export function DashboardPage() {
 
             const { updatedRoster, newsData } = assignEndOfYearAwards(finalRoster, gameState.year);
             finalRoster = updatedRoster;
-            
-            if (newsData.length > 0) {
-                await db.news.bulkAdd(newsData);
-            }
+            if (newsData.length > 0) await db.news.bulkAdd(newsData);
 
             const { checkRetirement } = await import('../logic/ai');
             let retiredCount = 0;
-            
             finalRoster.forEach(u => {
                 u.age++;
                 if (u.status === 'active' && checkRetirement(u, gameState.year)) {
@@ -284,21 +275,17 @@ export function DashboardPage() {
                 }
             });
 
-            const rookies = replenishRosters(finalRoster);
-            if (rookies.length > 0) {
-                finalRoster.push(...rookies);
-                await db.news.add({ 
-                    year: newYear, week: 1, 
-                    message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
-                    type: 'info' 
-                });
-            } else {
-                 await db.news.add({ 
-                    year: newYear, week: 1, 
-                    message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired.`, 
-                    type: 'info' 
-                });
-            }
+            const teams = await db.teams.toArray();
+            const { cutCount, newRookies, draftPicks } = processOffseason(finalRoster, teams, gameState.year);
+            
+            if (draftPicks.length > 0) await db.draftPicks.bulkAdd(draftPicks);
+            finalRoster.push(...newRookies);
+
+            await db.news.add({ 
+                year: newYear, week: 1, 
+                message: `📅 SEASON ${newYear} DRAFT! ${retiredCount} retired, ${cutCount} relegated. ${newRookies.length} rookies drafted.`, 
+                type: 'info' 
+            });
         }
         
         await db.umas.bulkPut(finalRoster);
@@ -323,19 +310,15 @@ export function DashboardPage() {
               newYear++; 
               setIsSimulating(false);
               
-              import('../logic/season').then(async ({ replenishRosters, assignEndOfYearAwards }) => {
+              import('../logic/season').then(async ({ processOffseason, assignEndOfYearAwards }) => {
                   import('../logic/ai').then(async ({ checkRetirement }) => {
                       let currentRoster = await db.umas.toArray();
                       
                       const { updatedRoster, newsData } = assignEndOfYearAwards(currentRoster, gameState.year);
                       currentRoster = updatedRoster;
-                      
-                      if (newsData.length > 0) {
-                          await db.news.bulkAdd(newsData);
-                      }
+                      if (newsData.length > 0) await db.news.bulkAdd(newsData);
 
                       let retiredCount = 0;
-                      
                       currentRoster.forEach(u => {
                           u.age++;
                           if (u.status === 'active' && checkRetirement(u, gameState.year)) {
@@ -344,12 +327,15 @@ export function DashboardPage() {
                           }
                       });
                       
-                      const rookies = replenishRosters(currentRoster);
-                      if (rookies.length > 0) currentRoster.push(...rookies);
+                      const teams = await db.teams.toArray();
+                      const { cutCount, newRookies, draftPicks } = processOffseason(currentRoster, teams, gameState.year);
+                      
+                      if (draftPicks.length > 0) await db.draftPicks.bulkAdd(draftPicks);
+                      currentRoster.push(...newRookies);
                       
                       await db.news.add({ 
                           year: newYear, week: 1, 
-                          message: `📅 SEASON ${newYear} BEGINS! ${retiredCount} retired. ${rookies.length} new rookies signed.`, 
+                          message: `📅 SEASON ${newYear} DRAFT! ${retiredCount} retired, ${cutCount} relegated. ${newRookies.length} rookies drafted.`, 
                           type: 'info' 
                       });
                       
@@ -426,10 +412,10 @@ export function DashboardPage() {
                   <button 
                       onClick={() => { 
                           if (isSimulating) {
-                              setIsSimulating(false); // STOPS THE LOOP
+                              setIsSimulating(false); 
                           } else {
                               setIsSimulating(true); 
-                              advanceWeek(false); // STARTS THE LOOP
+                              advanceWeek(false); 
                           }
                       }} 
                       style={{ 

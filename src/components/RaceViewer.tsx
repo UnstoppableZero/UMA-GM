@@ -14,34 +14,30 @@ interface Props {
 }
 
 const getVisualStrategy = (uma: Uma) => {
-    const s = uma.stats;
-    if (s.stamina > 600 && s.power > 600) return 'betweener';
-    if (s.speed > 800) return 'runner';
-    if (s.power > 800) return 'chaser';
-    return 'leader';
+    const s = uma.aptitude.strategy;
+    if (s.runner >= s.leader && s.runner >= s.betweener && s.runner >= s.chaser) return 'runner';
+    if (s.leader >= s.runner && s.leader >= s.betweener && s.leader >= s.chaser) return 'leader';
+    if (s.betweener >= s.runner && s.betweener >= s.leader && s.betweener >= s.chaser) return 'betweener';
+    return 'chaser';
 };
 
-const getVisualProgress = (pct: number, strategy: string) => {
-    if (pct >= 1) return 1;
-    if (pct <= 0) return 0;
-    if (strategy === 'runner') return Math.pow(pct, 0.85);
-    if (strategy === 'chaser') return Math.pow(pct, 1.25);
-    if (strategy === 'betweener') return Math.pow(pct, 1.1);
-    return pct;
-};
-
-// Interface for the real-time leaderboard
 interface LiveHorseStatus {
-    id: string;
-    name: string;
-    distanceTraveled: number;
-    color: string;
+    id: string; name: string; distanceTraveled: number; color: string;
 }
+
+// FORMAT LIVE CLOCK
+const formatRaceTime = (rawSeconds: number) => {
+  const mins = Math.floor(rawSeconds / 60);
+  const secs = Math.floor(rawSeconds % 60);
+  const ms = Math.floor((rawSeconds % 1) * 10);
+  return `${mins}:${secs.toString().padStart(2, '0')}.${ms}`;
+};
 
 export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, surface }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const timerRef = useRef<HTMLSpanElement>(null); // High-performance DOM ref for the clock
   
-  const trackConfig = TRACKS[location] || TRACKS['Tokyo'];
+  const trackConfig = TRACKS[location as keyof typeof TRACKS] || TRACKS['Tokyo'];
   const raceDistance = distance || (outcome as any).raceDistance || 2000;
   const raceSurface = surface || 'Turf';
 
@@ -53,9 +49,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
   
   const [showResults, setShowResults] = useState(false);
   const [currentCommentary, setCurrentCommentary] = useState("");
-  const [skillCutIn, setSkillCutIn] = useState<{name: string, text: string} | null>(null);
-
-  // LIVE LEADERBOARD STATE
   const [liveStandings, setLiveStandings] = useState<LiveHorseStatus[]>([]);
 
   const trackImage = useRef<HTMLImageElement | null>(null);
@@ -63,21 +56,26 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     setImageLoaded(false); 
     const img = new Image();
     img.src = trackConfig.image; 
-    img.onload = () => {
-      trackImage.current = img;
-      setImageLoaded(true);
-    };
+    img.onload = () => { trackImage.current = img; setImageLoaded(true); };
   }, [trackConfig]);
 
-  const runnerColors = useRef(outcome.results.map(() => 
-    `hsl(${Math.floor(Math.random() * 360)}, 85%, 60%)`
-  )).current;
+  const runnerColors = useRef(outcome.results.map(() => `hsl(${Math.floor(Math.random() * 360)}, 85%, 60%)`)).current;
+
+  // --- FIXED: PRE-CALCULATED SOFT LANES ---
+  // Gives each horse a relatively fixed Y-offset so they don't bounce wildly off each other
+  const laneAssignments = useRef(outcome.results.map((r, i) => {
+      const strat = getVisualStrategy(r.uma);
+      let base = 0;
+      if (strat === 'runner') base = -6;
+      else if (strat === 'leader') base = -2;
+      else if (strat === 'betweener') base = 4;
+      else if (strat === 'chaser') base = 10;
+      
+      return base + ((i % 4) - 1.5); 
+  })).current;
 
   const buildRacePath = () => {
-    const mainLoop = raceSurface === 'Dirt' 
-                    ? (trackConfig.dirtLoop || []) 
-                    : (trackConfig.turfLoop || []);
-    
+    const mainLoop = raceSurface === 'Dirt' ? (trackConfig.dirtLoop || []) : (trackConfig.turfLoop || []);
     if (mainLoop.length === 0) return [];
 
     const startsData = raceSurface === 'Dirt' ? trackConfig.starts?.dirt : trackConfig.starts?.turf;
@@ -87,17 +85,12 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
     let path: {x:number, y:number}[] = [];
 
     if (startConf) {
-        if (startConf.chute && startConf.chute.length > 0) {
-            path.push(...startConf.chute);
-        }
-
-        if (startConf.mergeIndex <= finishIdx) {
-            path.push(...mainLoop.slice(startConf.mergeIndex, finishIdx + 1));
-        } else {
+        if (startConf.chute && startConf.chute.length > 0) path.push(...startConf.chute);
+        if (startConf.mergeIndex <= finishIdx) path.push(...mainLoop.slice(startConf.mergeIndex, finishIdx + 1));
+        else {
             path.push(...mainLoop.slice(startConf.mergeIndex));
             path.push(...mainLoop.slice(0, finishIdx + 1));
         }
-
         for (let i = 0; i < startConf.laps; i++) {
             path.push(...mainLoop.slice(finishIdx + 1));
             path.push(...mainLoop.slice(0, finishIdx + 1));
@@ -133,7 +126,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
     const maxTime = Math.max(...outcome.results.map(r => r.time));
     const path = activePath.current;
-    const skillTimers = new Array(outcome.results.length).fill(0);
+
+    const activeZones = new Set<string>();
 
     const render = (timestamp: number) => {
       if (!lastTimestamp) lastTimestamp = timestamp;
@@ -141,6 +135,9 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       lastTimestamp = timestamp;
 
       if (!finished) accumulatedTime += deltaTime * speedRef.current;
+
+      // Update DOM Clock
+      if (timerRef.current) timerRef.current.innerText = formatRaceTime(accumulatedTime);
 
       const raceProgress = accumulatedTime / maxTime; 
       const logIdx = outcome.log.findIndex(l => l.timePct > raceProgress);
@@ -151,17 +148,9 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
           setCurrentCommentary(entry.message);
           lastLogIndex = activeIdx;
 
-          if (entry.message.includes("Ultimate")) {
+          if (entry.message.includes("ZONE")) {
               const horseResult = outcome.results.find(r => entry.message.includes(r.uma.lastName));
-              if (horseResult) {
-                  const idx = outcome.results.indexOf(horseResult);
-                  skillTimers[idx] = 60; 
-                  setSkillCutIn({
-                      name: `${horseResult.uma.firstName} ${horseResult.uma.lastName}`,
-                      text: "The Zone Entered!"
-                  });
-                  setTimeout(() => setSkillCutIn(null), 2000);
-              }
+              if (horseResult) activeZones.add(horseResult.uma.id);
           }
       }
 
@@ -170,9 +159,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
       if (canvas && ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (trackImage.current) {
-          ctx.drawImage(trackImage.current, 0, 0, canvas.width, canvas.height);
-        }
+        if (trackImage.current) ctx.drawImage(trackImage.current, 0, 0, canvas.width, canvas.height);
 
         if (path.length > 0) {
             const currentStandings: LiveHorseStatus[] = [];
@@ -180,16 +167,10 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
             outcome.results.forEach((res, idx) => {
               let rawPct = accumulatedTime / res.time;
               if (rawPct > 1) rawPct = 1;
-              const strat = getVisualStrategy(res.uma);
-              const visualPct = getVisualProgress(rawPct, strat);
-              const currentDist = visualPct * totalPathLength.current;
+              const currentDist = rawPct * totalPathLength.current;
               
-              // Push to live standings array
               currentStandings.push({
-                  id: res.uma.id,
-                  name: res.uma.lastName,
-                  distanceTraveled: currentDist,
-                  color: runnerColors[idx]
+                  id: res.uma.id, name: res.uma.lastName, distanceTraveled: currentDist, color: runnerColors[idx]
               });
 
               let distTraveled = 0;
@@ -210,46 +191,38 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
                 distTraveled += segLen;
               }
 
-              const totalRunners = outcome.results.length;
-              const laneSpacing = Math.min(3, 40 / totalRunners);
-              const wiggle = Math.sin(accumulatedTime * 2 + idx) * 0.5;
-              let laneOffset = (idx - (totalRunners / 2)) * laneSpacing + wiggle;
-              laneOffset = Math.max(-15, Math.min(15, laneOffset));
-
+              const laneOffset = laneAssignments[idx];
               const perpAngle = angle + (Math.PI / 2);
               const finalX = pos.x + (Math.cos(perpAngle) * laneOffset);
               const finalY = pos.y + (Math.sin(perpAngle) * laneOffset);
 
-              const isSkillActive = skillTimers[idx] > 0;
-              if (isSkillActive) skillTimers[idx]--;
+              const isInZone = activeZones.has(res.uma.id) && rawPct < 1;
 
-              if (visualPct > 0.7 || isSkillActive) {
+              if (isInZone) {
                   ctx.beginPath();
-                  ctx.arc(finalX, finalY, isSkillActive ? 12 : 8, 0, 2 * Math.PI);
-                  ctx.fillStyle = isSkillActive ? `rgba(255, 215, 0, 0.6)` : `rgba(255, 255, 255, 0.3)`;
+                  ctx.arc(finalX, finalY, 14, 0, 2 * Math.PI);
+                  ctx.fillStyle = `rgba(155, 89, 182, 0.6)`; 
                   ctx.fill();
-              }
-
-              if (visualPct > 0.8) {
+                  
                   ctx.beginPath();
                   ctx.moveTo(finalX, finalY);
-                  ctx.lineTo(finalX - Math.cos(angle)*20, finalY - Math.sin(angle)*20);
-                  ctx.strokeStyle = `rgba(255, 255, 255, 0.4)`;
-                  ctx.lineWidth = 2;
+                  ctx.lineTo(finalX - Math.cos(angle)*25, finalY - Math.sin(angle)*25);
+                  ctx.strokeStyle = `rgba(155, 89, 182, 0.8)`;
+                  ctx.lineWidth = 3;
                   ctx.stroke();
               }
 
               ctx.beginPath();
               ctx.arc(finalX, finalY, 6, 0, 2 * Math.PI); 
-              ctx.fillStyle = isSkillActive ? '#fff' : runnerColors[idx];
+              ctx.fillStyle = isInZone ? '#fff' : runnerColors[idx];
               ctx.fill();
-              ctx.strokeStyle = isSkillActive ? '#f1c40f' : 'white';
-              ctx.lineWidth = isSkillActive ? 3 : 1;
+              ctx.strokeStyle = isInZone ? '#8e44ad' : 'white';
+              ctx.lineWidth = isInZone ? 3 : 1;
               ctx.stroke();
 
-              if (visualPct < 1) { 
+              if (rawPct < 1) { 
                   ctx.fillStyle = 'white';
-                  ctx.font = isSkillActive ? 'bold 12px Arial' : 'bold 10px Arial';
+                  ctx.font = isInZone ? 'bold 12px Arial' : 'bold 10px Arial';
                   ctx.shadowColor = 'black';
                   ctx.shadowBlur = 4;
                   ctx.fillText(res.uma.lastName, finalX - 10, finalY - 10);
@@ -257,7 +230,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
               }
             });
 
-            // Sort standings (Highest distance first) and update state
             currentStandings.sort((a, b) => b.distanceTraveled - a.distanceTraveled);
             setLiveStandings(currentStandings);
         }
@@ -272,9 +244,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [outcome, imageLoaded, runnerColors, trackConfig]); 
+  }, [outcome, imageLoaded, runnerColors, trackConfig, laneAssignments]); 
 
-  // Calculate distance remaining for the leader to show on the board
   const leaderPct = liveStandings.length > 0 ? Math.min(1, liveStandings[0].distanceTraveled / totalPathLength.current) : 0;
   const metersRemaining = Math.max(0, Math.floor(raceDistance - (raceDistance * leaderPct)));
 
@@ -285,33 +256,20 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       transition: 'all 0.3s ease'
     }}>
-      
-      {skillCutIn && (
-        <div style={{
-            position: 'absolute', top: '20%', left: '0', right: '0', 
-            height: '150px',
-            background: 'linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(243, 156, 18, 0.9) 20%, rgba(243, 156, 18, 0.9) 80%, rgba(0,0,0,0) 100%)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            zIndex: 4000, transform: 'skewX(-20deg)', borderTop: '4px solid white', borderBottom: '4px solid white',
-            animation: 'slideIn 0.2s ease-out'
-        }}>
-            <h1 style={{ color: 'white', fontStyle: 'italic', fontSize: '3rem', margin: 0, textShadow: '4px 4px #c0392b' }}>
-                {skillCutIn.text}
-            </h1>
-            <h2 style={{ color: '#2c3e50', fontSize: '1.5rem', margin: 0, fontWeight: '900', textTransform: 'uppercase' }}>
-                {skillCutIn.name}
-            </h2>
-        </div>
-      )}
 
       <div style={{ 
         display: 'flex', justifyContent: 'space-between', 
         width: isTheaterMode ? '98%' : '90%', 
         maxWidth: '1600px', marginBottom: '15px', alignItems: 'center' 
       }}>
-      <h2 style={{ color: 'white', margin: 0, fontSize: '1.4rem' }}>
-          📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
-      </h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <h2 style={{ color: 'white', margin: 0, fontSize: '1.4rem' }}>
+              📺 {(outcome as any).displayName || trackConfig.name} - {raceSurface} {raceDistance}m
+          </h2>
+          <div style={{ color: '#f1c40f', fontSize: '1.5rem', fontFamily: 'monospace', fontWeight: 'bold', backgroundColor: '#222', padding: '5px 15px', borderRadius: '8px', border: '2px solid #555' }}>
+              ⏱️ <span ref={timerRef}>0:00.0</span>
+          </div>
+        </div>
         
         <div style={{ display: 'flex', gap: '15px' }}>
           <button onClick={() => setIsTheaterMode(!isTheaterMode)} style={btnStyle(isTheaterMode)}>
@@ -331,12 +289,9 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
         display: 'flex', gap: '20px',
         width: isTheaterMode ? '95vw' : '90vw',
         height: isTheaterMode ? '80vh' : '65vh',
-        maxWidth: '1600px',
-        maxHeight: '900px',
-        transition: 'all 0.3s ease'
+        maxWidth: '1600px', maxHeight: '900px', transition: 'all 0.3s ease'
       }}>
         
-        {/* === LIVE LEADERBOARD SIDEBAR === */}
         {!isTheaterMode && (
           <div style={{
               width: '250px', backgroundColor: '#1a1a1a', border: '2px solid #333', 
@@ -375,7 +330,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
           </div>
         )}
 
-        {/* === MAIN CANVAS === */}
         <div style={{ 
           flex: 1, position: 'relative', 
           backgroundColor: '#111', border: '4px solid #444', 
@@ -383,15 +337,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
           boxShadow: '0 10px 30px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
           <canvas 
-              ref={canvasRef} 
-              width={800} 
-              height={450} 
-              style={{ 
-                width: '100%', 
-                height: '100%', 
-                objectFit: 'contain',
-                backgroundColor: '#2ecc71'
-              }} 
+              ref={canvasRef} width={800} height={450} 
+              style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#2ecc71' }} 
           />
           
           {!showResults && (
@@ -427,7 +374,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
                                   <tr key={idx} style={{ borderBottom: '1px solid #222', backgroundColor: idx % 2 === 0 ? '#151515' : 'transparent' }}>
                                       <td style={{padding: '15px', fontWeight: 'bold', color: idx === 0 ? '#f1c40f' : 'white'}}>{idx + 1}</td>
                                       <td style={{padding: '15px', fontWeight: 'bold'}}>{res.uma.firstName} {res.uma.lastName}</td>
-                                      <td style={{padding: '15px', fontFamily: 'monospace'}}>{res.time.toFixed(2)}s</td>
+                                      <td style={{padding: '15px', fontFamily: 'monospace'}}>{formatRaceTime(res.time)}</td>
                                       <td style={{padding: '15px', textAlign: 'right', color: '#888'}}>{idx === 0 ? 'WINNER' : `+${(res.time - outcome.results[0].time).toFixed(2)}s`}</td>
                                   </tr>
                               ))}
@@ -452,13 +399,8 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 }
 
 const btnStyle = (active: boolean) => ({
-    padding: '10px 20px',
-    backgroundColor: active ? '#f39c12' : '#34495e',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 'bold' as const,
+    padding: '10px 20px', backgroundColor: active ? '#f39c12' : '#34495e',
+    color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer',
+    fontSize: '14px', fontWeight: 'bold' as const,
     boxShadow: active ? '0 0 10px rgba(243, 156, 18, 0.5)' : 'none'
 });
