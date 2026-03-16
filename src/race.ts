@@ -3,7 +3,11 @@ import type { Uma } from './types';
 import { getCommentary } from './commentary'; 
 
 export interface RaceResult {
-  uma: Uma; rank: number; time: number; splits: number[];
+  uma: Uma; 
+  rank: number; 
+  time: number; 
+  splits: number[];
+  positionLog: number[]; // <-- NEW: Tracks exact meters traveled per second!
 }
 
 export interface LogEntry { message: string; timePct: number; }
@@ -11,10 +15,10 @@ export interface LogEntry { message: string; timePct: number; }
 export interface RaceOutcome { results: RaceResult[]; log: LogEntry[]; }
 
 const FRAME_RATE = 10; 
+const MAX_SPRINT_BONUS = 1.5; 
 
-// --- OVERHAUL: PUNISHING WIND & DRAFTING ---
-const LEADER_WIND_DRAG = 1.35; // Leader burns 35% more stamina
-const DRAFTING_BONUS = 0.80;   // Pack saves 20% stamina tucked in
+const LEADER_WIND_DRAG = 1.15;   
+const DRAFTING_BONUS = 0.92;     
 
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
     const s = apt.strategy;
@@ -35,64 +39,73 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
   
   const distCategory = getDistanceType(distance);
 
-  // --- OVERHAUL: BIOLOGICAL BASE PACE ---
-  let basePace = 16.6;
-  if (distance <= 1400) basePace = 17.5;      
-  else if (distance <= 1800) basePace = 17.0; 
-  else if (distance <= 2400) basePace = 16.5; 
-  else basePace = 16.0;                       
+  let RACE_PACE = 16.2;
+  if (distance <= 1400) RACE_PACE = 16.5;
+  else if (distance <= 1800) RACE_PACE = 16.3;
+  else if (distance <= 2400) RACE_PACE = 16.1;
+  else RACE_PACE = 15.8;
 
-  let racers = field.map(uma => {
+  let racers = field.map((uma, index) => {
     // @ts-ignore
     const aptScore = uma.aptitude.distance[distCategory] || 1;
     let penaltyMod = 1.0;
-    if (aptScore === 6) penaltyMod = 0.95;      
-    else if (aptScore <= 4) penaltyMod = 0.85;  
-    else if (aptScore <= 2) penaltyMod = 0.70;  
-
-    const effectiveSpeed = uma.stats.speed * penaltyMod;
-    const effectiveStamina = uma.stats.stamina * penaltyMod;
-    const effectivePower = uma.stats.power * penaltyMod;
+    if (aptScore === 6) penaltyMod = 0.98;      
+    else if (aptScore <= 4) penaltyMod = 0.95;  
+    else if (aptScore <= 2) penaltyMod = 0.90;  
     
     // @ts-ignore
     const strategy = getBestStrategy(uma.aptitude);
 
-    // --- OVERHAUL: DYNAMIC PREFERRED GAPS (THE TEARDROP SHAPE) ---
     let preferredGap = 0;
     if (strategy === 'runner') preferredGap = 0; 
-    else if (strategy === 'leader') preferredGap = 3 + Math.random() * 5;     
-    else if (strategy === 'betweener') preferredGap = 10 + Math.random() * 8; 
-    else if (strategy === 'chaser') preferredGap = 20 + Math.random() * 10;   
+    else if (strategy === 'leader') preferredGap = 2 + Math.random() * 4;     
+    else if (strategy === 'betweener') preferredGap = 8 + Math.random() * 6;  
+    else if (strategy === 'chaser') preferredGap = 15 + Math.random() * 10;   
+
+    let baseTriggerDist = distance - 600; 
+    if (distance <= 1400) baseTriggerDist = distance - 400; 
+    
+    let stratOffset = 0;
+    if (strategy === 'runner') stratOffset = -150;     
+    else if (strategy === 'leader') stratOffset = -50; 
+    else if (strategy === 'betweener') stratOffset = 100; 
+    else if (strategy === 'chaser') stratOffset = 300; 
 
     const wisdomModifier = (1200 - uma.stats.wisdom) / 1200; 
     const randomNoise = (Math.random() * (60 * wisdomModifier)) - (30 * wisdomModifier);
 
-    let skillTriggerMeters = (distance - 600) + randomNoise;
+    let skillTriggerMeters = baseTriggerDist + stratOffset + randomNoise;
     skillTriggerMeters = Math.max(distance * 0.5, skillTriggerMeters); 
     skillTriggerMeters = Math.min(distance - 50, skillTriggerMeters);
 
     return {
       uma,
+      idx: index,
       currentDist: 0, currentSpeed: 0,
-      currentStamina: effectiveStamina, maxStamina: effectiveStamina, 
-      effectiveSpeed, effectivePower, strategy, preferredGap,
+      currentStamina: uma.stats.stamina * penaltyMod, maxStamina: uma.stats.stamina * penaltyMod, 
+      effectiveSpeed: uma.stats.speed * penaltyMod, effectivePower: uma.stats.power * penaltyMod,
+      strategy, preferredGap,
       finished: false, finishTime: 0,
-      inZone: false, isSpurting: false, stats: uma.stats,
-      isDrafting: false, isLeading: false, hasBonked: false
+      skillTriggered: false, skillTriggerMeters, 
+      isSpurting: false, stats: uma.stats,
+      isDrafting: false, isLeading: false, hasBonked: false,
+      positionLog: [0] // Starts at 0 meters at 0 seconds
     };
   });
 
   let time = 0;
+  let nextLogTime = 1.0; // The tracker for our frontend payload
   let finishedCount = 0;
   const tempLogs: { message: string, time: number }[] = [];
   
   let announced1000m = false;
+  let hasAnnouncedMid = false;
   let hasAnnouncedFinal = false;
   let leaderDist = 0;
+  let leaderId = "";
 
   tempLogs.push({ message: getCommentary('start'), time: 0.1 });
-
-  const distanceTax = distance / 2000; 
+  const distanceTax = distance / 1600; 
 
   while (finishedCount < racers.length) {
     time += (1 / FRAME_RATE);
@@ -104,6 +117,13 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
     
     racers.forEach(r => r.isLeading = (r.uma.id === leader.uma.id));
 
+    if (time % 2 < 0.1 && leader.uma.id !== leaderId && leader.currentDist > 50) {
+        leaderId = leader.uma.id;
+        if (leader.currentDist < distance - 200) {
+            tempLogs.push({ message: getCommentary('leader', { name: leader.uma.lastName }), time: time });
+        }
+    }
+
     if (leaderDist >= 1000 && !announced1000m) {
         announced1000m = true;
         let desc = "";
@@ -113,7 +133,13 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
         tempLogs.push({ message: desc, time: time });
     }
 
-    if (!hasAnnouncedFinal && leaderDist > distance - 300) {
+    if (!hasAnnouncedMid && leaderDist > distance * 0.5) {
+        hasAnnouncedMid = true;
+        tempLogs.push({ message: getCommentary('midRace'), time: time });
+    }
+
+    const finalStretchDist = distance > 2400 ? 400 : 200;
+    if (!hasAnnouncedFinal && leaderDist > distance - finalStretchDist) {
         hasAnnouncedFinal = true;
         tempLogs.push({ message: getCommentary('finalStraight'), time: time });
     }
@@ -125,63 +151,65 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       let targetSpeed = 0;
       r.isDrafting = false; 
 
-      const speedRatio = r.effectiveSpeed / 1200;
-      const powerRatio = r.effectivePower / 1200;
-
-      if (progress < 0.65) {
+      // PHASE 1: JOCKEYING
+      if (progress < 0.70) {
+          const jockeyingWiggle = Math.sin(time * 0.5 + r.idx) * 6.0;
+          const dynamicGap = Math.max(0, r.preferredGap + jockeyingWiggle);
           const myGap = leaderDist - r.currentDist;
           
-          targetSpeed = basePace;
+          const statPaceAdvantage = ((r.effectiveSpeed + r.effectivePower) / 2400) * 0.25;
+          targetSpeed = RACE_PACE + statPaceAdvantage;
 
-          if (myGap > r.preferredGap + 2) { 
-             targetSpeed *= 1.04; 
+          if (myGap > dynamicGap + 1.5) { 
+             targetSpeed *= 1.05; 
              if (myGap > 3 && myGap < 15 && !r.isLeading) r.isDrafting = true;
-          } else if (myGap < r.preferredGap - 1) {
-             if (!r.isLeading) targetSpeed *= 0.96;
+          } else if (myGap < dynamicGap - 1.5) {
+             if (!r.isLeading) targetSpeed *= 0.95;
           }
+
+          if (r.stats.wisdom < 400 && Math.random() < 0.05) targetSpeed *= 1.03; 
       } 
+      // PHASE 2: LATE KICK
       else {
-          const sprintCostPerMeter = 1.0 * distanceTax; 
           const distRemaining = distance - r.currentDist;
+          const speedBonus = (r.effectiveSpeed / 1200) * (MAX_SPRINT_BONUS * 0.7);
+          const powerBonus = (r.effectivePower / 1200) * (MAX_SPRINT_BONUS * 0.3);
+          
+          targetSpeed = RACE_PACE + speedBonus + powerBonus;
+
+          const sprintCostPerMeter = 0.5 * distanceTax; 
           const canSprint = r.currentStamina > (distRemaining * sprintCostPerMeter);
 
-          if (canSprint || (r.stats.guts > 800 && progress > 0.85)) {
+          let spurtThreshold = 0.70; 
+          if (r.stats.stamina > 600) spurtThreshold = 0.65; 
+          if (r.stats.stamina < 450) spurtThreshold = 0.75; 
+
+          const gutsThresholdOverride = canSprint || (r.stats.guts > 800 && progress > 0.85);
+
+          if (progress > spurtThreshold && gutsThresholdOverride) {
              r.isSpurting = true;
           } else {
              r.isSpurting = false; 
           }
 
-          if (progress > 0.75 && !r.inZone && r.stats.guts > 750 && r.stats.wisdom > 750 && !r.hasBonked) {
-              if (Math.random() < 0.002) { 
-                  r.inZone = true;
-                  tempLogs.push({ message: getCommentary('zoneEntered', { name: r.uma.lastName }), time: time });
-              }
-          }
-
-          if (r.isSpurting || r.inZone) {
-             const speedBonus = Math.pow(speedRatio, 1.6) * 2.0;
-             targetSpeed = basePace + speedBonus;
+          if (r.isSpurting) {
+             targetSpeed += 0.5; 
+             if (r.strategy === 'runner') targetSpeed += 0.0; 
+             else if (r.strategy === 'leader') targetSpeed += 0.25; 
+             else if (r.strategy === 'betweener') targetSpeed += 0.65; 
+             else if (r.strategy === 'chaser') targetSpeed += 1.10; 
              
-             if (r.strategy === 'chaser') targetSpeed += 0.4; 
-             if (r.inZone) targetSpeed += 0.8; 
-          } else {
-             targetSpeed = basePace; 
+             r.currentStamina -= (0.5 * distanceTax); 
           }
       }
 
-      let drain = 0.60 * distanceTax * (1 / FRAME_RATE);
+      let drain = 0.45 * distanceTax * (1 / FRAME_RATE);
       
-      if (r.isSpurting) {
-          const spurtTax = 1.0 + Math.pow(speedRatio, 2); 
-          drain *= (2.0 * spurtTax); 
-      }
-      
+      if (r.isSpurting) drain *= 1.5; 
       if (r.isLeading) drain *= LEADER_WIND_DRAG; 
       else if (r.isDrafting) drain *= DRAFTING_BONUS;   
       
-      if (r.inZone) drain = 0; 
-
-      const wisdomSave = Math.pow(r.stats.wisdom / 1200, 1.5) * 0.15; 
+      const wisdomSave = (r.stats.wisdom / 1200) * 0.15; 
       drain *= (1 - wisdomSave);
 
       r.currentStamina -= drain;
@@ -189,7 +217,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       if (r.currentStamina <= 0) {
            r.currentStamina = 0;
            r.isSpurting = false;
-           r.inZone = false;
            
            if (!r.hasBonked) {
                r.hasBonked = true;
@@ -199,10 +226,22 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
            }
            
            const gutsSurvivalRate = 0.85 + ((r.stats.guts / 1200) * 0.10); 
-           targetSpeed = Math.min(targetSpeed, basePace * gutsSurvivalRate); 
+           targetSpeed = Math.min(targetSpeed, RACE_PACE * gutsSurvivalRate); 
       }
 
-      const acceleration = Math.max(0.1, Math.pow(powerRatio, 1.5) * 1.5) * (1 / FRAME_RATE); 
+      if (!r.skillTriggered && r.currentDist >= r.skillTriggerMeters && r.currentStamina > 20) {
+         const chance = 0.50 + (r.stats.wisdom / 2400); 
+         if (Math.random() < chance) {
+             r.skillTriggered = true;
+             if (!tempLogs.some(l => l.message.includes(r.uma.lastName) && l.message.includes("Zone"))) {
+                 tempLogs.push({ message: `⚡ ${r.uma.lastName} taps into the Zone!`, time: time });
+             }
+         }
+      }
+
+      if (r.skillTriggered) targetSpeed += 0.8;
+
+      const acceleration = (r.effectivePower / 200) * (1 / FRAME_RATE); 
       if (r.currentSpeed < targetSpeed) {
          r.currentSpeed = Math.min(targetSpeed, r.currentSpeed + acceleration);
       } else {
@@ -217,12 +256,25 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
         finishedCount++;
       }
     });
+
+    // --- NEW: THE POSITION LOG ---
+    // Every full second, we record exactly where every horse is on the track
+    if (time >= nextLogTime) {
+        racers.forEach(r => {
+            r.positionLog.push(Math.min(distance, r.currentDist)); // Cap at finish line
+        });
+        nextLogTime += 1.0;
+    }
   }
 
   racers.sort((a, b) => a.finishTime - b.finishTime);
 
   const results = racers.map((r, i) => ({
-    uma: r.uma, rank: i + 1, time: parseFloat(r.finishTime.toFixed(2)), splits: [],
+    uma: r.uma, 
+    rank: i + 1, 
+    time: parseFloat(r.finishTime.toFixed(2)), 
+    splits: [],
+    positionLog: r.positionLog // Send the physics log to the UI!
   }));
 
   const raceEndTime = Math.max(...results.map(r => r.time));

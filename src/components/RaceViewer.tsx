@@ -1,7 +1,7 @@
 // src/components/RaceViewer.tsx
 import React, { useEffect, useRef, useState } from 'react';
 import type { RaceOutcome } from '../race';
-import { TRACKS } from '../tracks';
+import { TRACKS } from '..//tracks';
 import type { Location } from '../schedule';
 import type { Uma } from '../types';
 
@@ -14,7 +14,7 @@ interface Props {
 }
 
 const getVisualStrategy = (uma: Uma) => {
-    const s = uma.aptitude.strategy;
+    const s = uma.aptitude?.strategy || { runner: 0, leader: 0, betweener: 0, chaser: 0 };
     if (s.runner >= s.leader && s.runner >= s.betweener && s.runner >= s.chaser) return 'runner';
     if (s.leader >= s.runner && s.leader >= s.betweener && s.leader >= s.chaser) return 'leader';
     if (s.betweener >= s.runner && s.betweener >= s.leader && s.betweener >= s.chaser) return 'betweener';
@@ -25,7 +25,6 @@ interface LiveHorseStatus {
     id: string; name: string; distanceTraveled: number; color: string;
 }
 
-// FORMAT LIVE CLOCK
 const formatRaceTime = (rawSeconds: number) => {
   const mins = Math.floor(rawSeconds / 60);
   const secs = Math.floor(rawSeconds % 60);
@@ -35,9 +34,10 @@ const formatRaceTime = (rawSeconds: number) => {
 
 export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, surface }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const timerRef = useRef<HTMLSpanElement>(null); // High-performance DOM ref for the clock
+  const timerRef = useRef<HTMLSpanElement>(null); 
   
-  const trackConfig = TRACKS[location as keyof typeof TRACKS] || TRACKS['Tokyo'];
+  // @ts-ignore
+  const trackConfig = TRACKS[location] || TRACKS['Tokyo'];
   const raceDistance = distance || (outcome as any).raceDistance || 2000;
   const raceSurface = surface || 'Turf';
 
@@ -61,29 +61,23 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
   const runnerColors = useRef(outcome.results.map(() => `hsl(${Math.floor(Math.random() * 360)}, 85%, 60%)`)).current;
 
-  // --- FIXED: PRE-CALCULATED SOFT LANES ---
-  // Gives each horse a relatively fixed Y-offset so they don't bounce wildly off each other
   const laneAssignments = useRef(outcome.results.map((r, i) => {
       const strat = getVisualStrategy(r.uma);
       let base = 0;
-      if (strat === 'runner') base = -6;
-      else if (strat === 'leader') base = -2;
-      else if (strat === 'betweener') base = 4;
-      else if (strat === 'chaser') base = 10;
-      
+      if (strat === 'runner') base = -4;
+      else if (strat === 'leader') base = -1;
+      else if (strat === 'betweener') base = 2;
+      else if (strat === 'chaser') base = 5;
       return base + ((i % 4) - 1.5); 
   })).current;
 
   const buildRacePath = () => {
     const mainLoop = raceSurface === 'Dirt' ? (trackConfig.dirtLoop || []) : (trackConfig.turfLoop || []);
     if (mainLoop.length === 0) return [];
-
     const startsData = raceSurface === 'Dirt' ? trackConfig.starts?.dirt : trackConfig.starts?.turf;
     const startConf = startsData?.[raceDistance];
     const finishIdx = trackConfig.finishLineIndex;
-
     let path: {x:number, y:number}[] = [];
-
     if (startConf) {
         if (startConf.chute && startConf.chute.length > 0) path.push(...startConf.chute);
         if (startConf.mergeIndex <= finishIdx) path.push(...mainLoop.slice(startConf.mergeIndex, finishIdx + 1));
@@ -126,7 +120,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
     const maxTime = Math.max(...outcome.results.map(r => r.time));
     const path = activePath.current;
-
     const activeZones = new Set<string>();
 
     const render = (timestamp: number) => {
@@ -136,7 +129,6 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
       if (!finished) accumulatedTime += deltaTime * speedRef.current;
 
-      // Update DOM Clock
       if (timerRef.current) timerRef.current.innerText = formatRaceTime(accumulatedTime);
 
       const raceProgress = accumulatedTime / maxTime; 
@@ -147,8 +139,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
           const entry = outcome.log[activeIdx];
           setCurrentCommentary(entry.message);
           lastLogIndex = activeIdx;
-
-          if (entry.message.includes("ZONE")) {
+          if (entry.message.includes("Zone")) {
               const horseResult = outcome.results.find(r => entry.message.includes(r.uma.lastName));
               if (horseResult) activeZones.add(horseResult.uma.id);
           }
@@ -165,9 +156,34 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
             const currentStandings: LiveHorseStatus[] = [];
 
             outcome.results.forEach((res, idx) => {
-              let rawPct = accumulatedTime / res.time;
-              if (rawPct > 1) rawPct = 1;
-              const currentDist = rawPct * totalPathLength.current;
+              // --- FIXED: READ FROM PHYSICS LOG INSTEAD OF CONSTANT VELOCITY ---
+              let realWorldMeters = 0;
+              const tIndex = Math.floor(accumulatedTime);
+
+              if (accumulatedTime >= res.time) {
+                  realWorldMeters = raceDistance;
+              } else {
+                  // Interpolate between exact physics ticks
+                  const d1 = res.positionLog[tIndex] !== undefined ? res.positionLog[tIndex] : raceDistance;
+                  
+                  let d2;
+                  let segmentDuration = 1.0;
+                  if (tIndex + 1 < res.positionLog.length) {
+                      d2 = res.positionLog[tIndex + 1];
+                  } else {
+                      d2 = raceDistance; 
+                      segmentDuration = res.time - tIndex; 
+                  }
+
+                  const tFraction = accumulatedTime - tIndex;
+                  const progressInSegment = segmentDuration > 0 ? (tFraction / segmentDuration) : 1;
+                  
+                  realWorldMeters = d1 + (d2 - d1) * progressInSegment;
+              }
+
+              // Translate physical meters into UI pixel distance
+              const uiProgress = realWorldMeters / raceDistance;
+              const currentDist = uiProgress * totalPathLength.current;
               
               currentStandings.push({
                   id: res.uma.id, name: res.uma.lastName, distanceTraveled: currentDist, color: runnerColors[idx]
@@ -196,36 +212,36 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
               const finalX = pos.x + (Math.cos(perpAngle) * laneOffset);
               const finalY = pos.y + (Math.sin(perpAngle) * laneOffset);
 
-              const isInZone = activeZones.has(res.uma.id) && rawPct < 1;
+              const isInZone = activeZones.has(res.uma.id) && uiProgress < 1;
 
               if (isInZone) {
                   ctx.beginPath();
-                  ctx.arc(finalX, finalY, 14, 0, 2 * Math.PI);
+                  ctx.arc(finalX, finalY, 10, 0, 2 * Math.PI); 
                   ctx.fillStyle = `rgba(155, 89, 182, 0.6)`; 
                   ctx.fill();
                   
                   ctx.beginPath();
                   ctx.moveTo(finalX, finalY);
-                  ctx.lineTo(finalX - Math.cos(angle)*25, finalY - Math.sin(angle)*25);
+                  ctx.lineTo(finalX - Math.cos(angle)*18, finalY - Math.sin(angle)*18);
                   ctx.strokeStyle = `rgba(155, 89, 182, 0.8)`;
                   ctx.lineWidth = 3;
                   ctx.stroke();
               }
 
               ctx.beginPath();
-              ctx.arc(finalX, finalY, 6, 0, 2 * Math.PI); 
+              ctx.arc(finalX, finalY, 4, 0, 2 * Math.PI); 
               ctx.fillStyle = isInZone ? '#fff' : runnerColors[idx];
               ctx.fill();
               ctx.strokeStyle = isInZone ? '#8e44ad' : 'white';
-              ctx.lineWidth = isInZone ? 3 : 1;
+              ctx.lineWidth = isInZone ? 2 : 1;
               ctx.stroke();
 
-              if (rawPct < 1) { 
+              if (uiProgress < 1) { 
                   ctx.fillStyle = 'white';
-                  ctx.font = isInZone ? 'bold 12px Arial' : 'bold 10px Arial';
+                  ctx.font = isInZone ? 'bold 10px Arial' : 'bold 9px Arial';
                   ctx.shadowColor = 'black';
                   ctx.shadowBlur = 4;
-                  ctx.fillText(res.uma.lastName, finalX - 10, finalY - 10);
+                  ctx.fillText(res.uma.lastName, finalX - 8, finalY - 8);
                   ctx.shadowBlur = 0;
               }
             });
@@ -244,7 +260,7 @@ export function RaceViewer({ outcome, onClose, location = 'Tokyo', distance, sur
 
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [outcome, imageLoaded, runnerColors, trackConfig, laneAssignments]); 
+  }, [outcome, imageLoaded, runnerColors, trackConfig, laneAssignments, raceDistance]); 
 
   const leaderPct = liveStandings.length > 0 ? Math.min(1, liveStandings[0].distanceTraveled / totalPathLength.current) : 0;
   const metersRemaining = Math.max(0, Math.floor(raceDistance - (raceDistance * leaderPct)));
