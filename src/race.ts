@@ -7,7 +7,7 @@ export interface RaceResult {
   rank: number; 
   time: number; 
   splits: number[];
-  positionLog: number[]; // <-- NEW: Tracks exact meters traveled per second!
+  positionLog: number[]; 
 }
 
 export interface LogEntry { message: string; timePct: number; }
@@ -17,8 +17,10 @@ export interface RaceOutcome { results: RaceResult[]; log: LogEntry[]; }
 const FRAME_RATE = 10; 
 const MAX_SPRINT_BONUS = 1.5; 
 
-const LEADER_WIND_DRAG = 1.15;   
-const DRAFTING_BONUS = 0.92;     
+// --- NEW: HARSHER WIND DRAG ---
+// If the leader is uncontested, they burn stamina heavily. They MUST have elite stamina to go wire-to-wire.
+const LEADER_WIND_DRAG = 1.45;   
+const DRAFTING_BONUS = 0.85;     
 
 function getBestStrategy(apt: Uma['aptitude']): 'runner' | 'leader' | 'betweener' | 'chaser' {
     const s = apt.strategy;
@@ -89,12 +91,12 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       skillTriggered: false, skillTriggerMeters, 
       isSpurting: false, stats: uma.stats,
       isDrafting: false, isLeading: false, hasBonked: false,
-      positionLog: [0] // Starts at 0 meters at 0 seconds
+      positionLog: [0] 
     };
   });
 
   let time = 0;
-  let nextLogTime = 1.0; // The tracker for our frontend payload
+  let nextLogTime = 1.0; 
   let finishedCount = 0;
   const tempLogs: { message: string, time: number }[] = [];
   
@@ -151,7 +153,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       let targetSpeed = 0;
       r.isDrafting = false; 
 
-      // PHASE 1: JOCKEYING
       if (progress < 0.70) {
           const jockeyingWiggle = Math.sin(time * 0.5 + r.idx) * 6.0;
           const dynamicGap = Math.max(0, r.preferredGap + jockeyingWiggle);
@@ -169,7 +170,6 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
 
           if (r.stats.wisdom < 400 && Math.random() < 0.05) targetSpeed *= 1.03; 
       } 
-      // PHASE 2: LATE KICK
       else {
           const distRemaining = distance - r.currentDist;
           const speedBonus = (r.effectiveSpeed / 1200) * (MAX_SPRINT_BONUS * 0.7);
@@ -193,11 +193,12 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
           }
 
           if (r.isSpurting) {
-             targetSpeed += 0.5; 
-             if (r.strategy === 'runner') targetSpeed += 0.0; 
-             else if (r.strategy === 'leader') targetSpeed += 0.25; 
-             else if (r.strategy === 'betweener') targetSpeed += 0.65; 
-             else if (r.strategy === 'chaser') targetSpeed += 1.10; 
+             // --- NEW: THE SWEEP ---
+             // Massively increased the late kick modifiers so Betweeners/Chasers actually fly past the pack
+             if (r.strategy === 'runner') targetSpeed += 0.1; 
+             else if (r.strategy === 'leader') targetSpeed += 0.4; 
+             else if (r.strategy === 'betweener') targetSpeed += 0.9; 
+             else if (r.strategy === 'chaser') targetSpeed += 1.4; 
              
              r.currentStamina -= (0.5 * distanceTax); 
           }
@@ -225,7 +226,8 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
                }
            }
            
-           const gutsSurvivalRate = 0.85 + ((r.stats.guts / 1200) * 0.10); 
+           // A slightly harsher Bonk ensures exhausted leaders fade properly into the pack
+           const gutsSurvivalRate = 0.80 + ((r.stats.guts / 1200) * 0.10); 
            targetSpeed = Math.min(targetSpeed, RACE_PACE * gutsSurvivalRate); 
       }
 
@@ -241,7 +243,10 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
 
       if (r.skillTriggered) targetSpeed += 0.8;
 
-      const acceleration = (r.effectivePower / 200) * (1 / FRAME_RATE); 
+      // --- NEW: EXPLOSIVE ACCELERATION ---
+      let acceleration = (r.effectivePower / 200) * (1 / FRAME_RATE); 
+      if (r.isSpurting) acceleration *= 2.5; // Snap to top speed instantly during the late kick!
+
       if (r.currentSpeed < targetSpeed) {
          r.currentSpeed = Math.min(targetSpeed, r.currentSpeed + acceleration);
       } else {
@@ -257,11 +262,9 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
       }
     });
 
-    // --- NEW: THE POSITION LOG ---
-    // Every full second, we record exactly where every horse is on the track
     if (time >= nextLogTime) {
         racers.forEach(r => {
-            r.positionLog.push(Math.min(distance, r.currentDist)); // Cap at finish line
+            r.positionLog.push(Math.min(distance, r.currentDist)); 
         });
         nextLogTime += 1.0;
     }
@@ -274,7 +277,7 @@ export const simulateRace = (field: Uma[], distance: number, surface: 'Turf'|'Di
     rank: i + 1, 
     time: parseFloat(r.finishTime.toFixed(2)), 
     splits: [],
-    positionLog: r.positionLog // Send the physics log to the UI!
+    positionLog: r.positionLog 
   }));
 
   const raceEndTime = Math.max(...results.map(r => r.time));

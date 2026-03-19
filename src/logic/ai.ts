@@ -7,7 +7,6 @@ const MAX_STARTS_ELITE_SOFT = 6;
 const MAX_STARTS_ELITE_HARD = 9;  
 const MAX_STARTS_OPEN = 12;      
 
-// CONFIG: REST WEEKS
 const REST_WEEKS_ELITE = 4; 
 const REST_WEEKS_OPEN = 2;  
 
@@ -58,73 +57,88 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   if (is3yoOnly && uma.age !== 3) return false;
   
   const history = uma.history || [];
-
-  // ==========================================================================
-  // --- NEW: THE TRIPLE CROWN OBSESSION ---
-  // ==========================================================================
-  const wonSatsuki = history.some(h => h.year === currentYear && h.raceName.includes("Satsuki Sho") && h.rank === 1);
-  const wonDerby = history.some(h => h.year === currentYear && h.raceName.includes("Tokyo Yushun") && h.rank === 1);
-  const kikukaEvent = FULL_CALENDAR.find(r => r.name.includes("Kikuka Sho"));
+  const statTotal = uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom;
+  const isElite = statTotal > 3200 || (uma.career?.earnings || 0) > 20000;
   
-  if (wonSatsuki && wonDerby && kikukaEvent && currentWeek <= kikukaEvent.week) {
-      const classicPathRaces = ["Kikuka Sho", "St. Lite Kinen", "Kobe Shimbun Hai"];
-      if (classicPathRaces.some(c => race.name.includes(c))) {
-          if (race.name.includes("Kikuka Sho")) return true; // Force entry, ignore distance penalties!
-      } else {
-          return false; // Refuse all other races until the Kikuka Sho is over
-      }
-  }
+  // @ts-ignore
+  const medApt = uma.aptitude?.distance?.medium || 1;
+  // @ts-ignore
+  const longApt = uma.aptitude?.distance?.long || 1;
 
-  const wonOka = history.some(h => h.year === currentYear && h.raceName.includes("Oka Sho") && h.rank === 1);
-  const wonOaks = history.some(h => h.year === currentYear && h.raceName.includes("Yushun Himba") && h.rank === 1);
-  const shukaEvent = FULL_CALENDAR.find(r => r.name.includes("Shuka Sho"));
-
-  // Make sure they don't double dip if they somehow won both sets of spring classics
-  if (wonOka && wonOaks && !(wonSatsuki && wonDerby) && shukaEvent && currentWeek <= shukaEvent.week) {
-      const filliesPathRaces = ["Shuka Sho", "Rose Stakes", "Shion Stakes"];
-      if (filliesPathRaces.some(f => race.name.includes(f))) {
-          if (race.name.includes("Shuka Sho")) return true; // Force entry
-      } else {
-          return false; // Refuse all other races until the Shuka Sho is over
-      }
-  }
   // ==========================================================================
+  // --- THE SUMMER VACATION ---
+  // Elite horses rest during the heat of the summer. No G3 handicaps allowed!
+  // ==========================================================================
+  if (isElite && currentWeek >= 25 && currentWeek <= 34) {
+      return false; 
+  }
+
+  // ==========================================================================
+  // --- PRESTIGE PATHING: THE CLASSIC PREFERENCE ---
+  // Elite horses capable of running Medium/Long distances will actively boycott 
+  // Fillies' restricted races to force themselves into the main Classic path.
+  // ==========================================================================
+  const isFilliesRace = race.requirements?.includes('Fillies') || race.requirements?.includes('F&M');
+  if (isFilliesRace && isElite && uma.age === 3 && medApt >= 4) {
+      return false; 
+  }
+
+  // ==========================================================================
+  // --- THE KANTO / KANSAI TRIAL COIN-FLIP ---
+  // Prevents Week 37 from vacuuming the entire generation, ensuring Kobe Shimbun
+  // gets roughly half of the 3-year-old population.
+  // ==========================================================================
+  if (race.name.includes("St. Lite Kinen") || race.name.includes("Kobe Shimbun Hai")) {
+      const stableCoinFlip = uma.id.charCodeAt(0) % 2 === 0; 
+      if (race.name.includes("St. Lite Kinen") && !stableCoinFlip) return false;
+      if (race.name.includes("Kobe Shimbun Hai") && stableCoinFlip) return false;
+  }
+
+  const isTrial = Object.values(TRIAL_MAP).some(trials => trials.some(t => race.name.includes(t)));
+
+  // ==========================================================================
+  // --- GENERATIONAL PATHING ---
+  // ==========================================================================
+  if (uma.age === 3 && currentWeek >= 35 && currentWeek <= 44) {
+      
+      const isOlderAutumnG1 = ["Tenno Sho (Autumn)", "Japan Cup"].some(g => race.name.includes(g));
+      if (isOlderAutumnG1 && longApt >= 4) {
+          return false; // Force Stayers to wait for the Kikuka Sho!
+      }
+
+      const wonSatsuki = history.some(h => h.year === currentYear && h.raceName.includes("Satsuki Sho") && h.rank === 1);
+      const wonDerby = history.some(h => h.year === currentYear && h.raceName.includes("Tokyo Yushun") && h.rank === 1);
+      
+      if (wonSatsuki && wonDerby) {
+          const classicPathRaces = ["Kikuka Sho", "St. Lite Kinen", "Kobe Shimbun Hai"];
+          if (classicPathRaces.some(c => race.name.includes(c))) {
+              return true; // Bypass ALL condition/rest checks to force entry!
+          } else {
+              return false; 
+          }
+      }
+  }
 
   // --- THE "STRICT TARGET" GOLDEN TICKET HOLD ---
   let targetedG1ByTicket: string | null = null;
 
   for (const g1 of Object.keys(TRIAL_MAP)) {
       const trials = TRIAL_MAP[g1];
-      
-      const earnedTicket = history.some(h => 
-          h.year === currentYear && 
-          trials.some(t => h.raceName.includes(t)) && 
-          h.rank <= 3
-      );
-      
-      const spentTicket = history.some(h => 
-          h.year === currentYear && 
-          h.raceName.includes(g1)
-      );
+      const earnedTicket = history.some(h => h.year === currentYear && trials.some(t => h.raceName.includes(t)) && h.rank <= 3);
+      const spentTicket = history.some(h => h.year === currentYear && h.raceName.includes(g1));
 
       if (earnedTicket && !spentTicket) {
           const g1Event = FULL_CALENDAR.find(r => r.name.includes(g1));
-          if (g1Event && currentWeek > g1Event.week) {
-              continue; 
-          }
+          if (g1Event && currentWeek > g1Event.week) continue; 
           targetedG1ByTicket = g1;
           break; 
       }
   }
 
   if (targetedG1ByTicket) {
-      if (race.name.includes(targetedG1ByTicket)) {
-          return true; 
-      } else {
-          return false; 
-      }
+      if (race.name.includes(targetedG1ByTicket)) return true; 
+      else return false; 
   }
-  // ---------------------------------------------------
 
   // SUITABILITY CHECK
   // @ts-ignore
@@ -142,28 +156,20 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
   const minApt = race.grade === 'G1' ? 4 : 3;
   if (distApt < minApt) return false;
 
-  const g1Wins = history.filter(h => 
-      h.rank === 1 && (h.raceName.includes('G1') || G1_NAMES.some(g => h.raceName.includes(g)))
-  ).length;
+  const g1Wins = history.filter(h => h.rank === 1 && (h.raceName.includes('G1') || G1_NAMES.some(g => h.raceName.includes(g)))).length;
   
-  // THE "ABSOLUTE CEILING"
   const totalWins = uma.career?.wins || 0;
   const isChampion = g1Wins > 0;
   const isVeteran = totalWins >= 8;
 
-  if (race.grade === 'G3' && (isChampion || isVeteran || totalWins >= 6)) return false; 
-  if (race.grade === 'G2' && (isChampion || isVeteran)) return false;
+  if (race.grade === 'G3' && (isChampion || isVeteran || totalWins >= 6) && !isTrial) return false; 
+  if (race.grade === 'G2' && (isChampion || isVeteran) && !isTrial) return false;
 
-  // STANDARD CONDITION CHECK
   const minCondition = 60;
   if ((uma.condition || 100) < minCondition) return false;
 
-  // SCHEDULE & REST LOGIC
   const thisYearRaces = history.filter(h => h.year === currentYear); 
   const lastRace = history[history.length - 1];
-  
-  const statTotal = uma.stats.speed + uma.stats.stamina + uma.stats.power + uma.stats.guts + uma.stats.wisdom;
-  const isElite = statTotal > 3200 || (uma.career?.earnings || 0) > 20000;
 
   if (lastRace) {
       let weeksSince = currentWeek - lastRace.week;
@@ -178,12 +184,10 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
       if (weeksSince < requiredRest) return false;
   }
 
-  // CAREER MANAGEMENT
   if (isElite) {
       const hardCap = race.name.includes('Arima') ? MAX_STARTS_ELITE_HARD + 1 : MAX_STARTS_ELITE_HARD;
       if (thisYearRaces.length >= hardCap) return false;
-      if (thisYearRaces.length >= MAX_STARTS_ELITE_SOFT && race.grade !== 'G1') return false;
-      if (race.grade === 'G3' && thisYearRaces.length > 0) return false; 
+      if (thisYearRaces.length >= MAX_STARTS_ELITE_SOFT && race.grade !== 'G1' && !isTrial) return false;
   } else {
       if (thisYearRaces.length >= MAX_STARTS_OPEN) return false;
   }
@@ -194,27 +198,20 @@ export function shouldAIEnterRace(uma: Uma, race: RaceEvent, currentWeek: number
 export function checkRetirement(uma: Uma, currentYear: number): boolean {
     const age = uma.age;
     const totalRaces = uma.career?.races || 0;
-    
-    const g1Wins = uma.history?.filter(h => 
-        h.rank === 1 && (h.raceName.includes("G1") || G1_NAMES.some(g1 => h.raceName.includes(g1)))
-    )?.length || 0;
+    const g1Wins = uma.history?.filter(h => h.rank === 1 && (h.raceName.includes("G1") || G1_NAMES.some(g1 => h.raceName.includes(g1))))?.length || 0;
 
     if (age >= 8) return true; 
-    
     if (g1Wins >= 6) {
         if (age >= 5) return Math.random() > 0.1; 
         if (age === 4) return Math.random() > 0.6; 
     }
-
     if (totalRaces > 35) {
         if (g1Wins < 3) return true; 
         return Math.random() > 0.4; 
     }
-    
     if (age >= 6) {
         const chance = age === 6 ? 0.3 : 0.6; 
         return Math.random() < chance;
     }
-    
     return false;
 }
